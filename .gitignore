@@ -1,0 +1,8 @@
+*project
+Debug/
+.config/
+.launches/
+.settings/
+*bak
+src/
+.xdchelp
