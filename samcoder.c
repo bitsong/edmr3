@@ -3,7 +3,6 @@
 
 #include "samcoder.h"
 #include "bitmap.h"
-
 #define GRAY
 
 #ifdef GRAY
@@ -48,6 +47,7 @@ static int samcoder_construct(struct samcoder *coder,int mode)
 	coder->_codec2_mode = mode;
 	coder->_fec_mode = FEC12_8;
 	coder->_nfecc = samcoder_fecs_per_frame(coder);
+	coder->patbits = NULL;
 	codec2_set_natural_or_gray(coder->codec,ISGRAY);
 	goto out;
 	
@@ -83,6 +83,7 @@ static void samcoder_destruct(struct samcoder *coder)
 		coder->codec = NULL;
 		codec2_destroy(coder->codec);
 	}
+	coder->patbits = NULL;
 }
 
 struct samcoder* samcoder_create(int mode,...)
@@ -143,7 +144,7 @@ int  samcoder_decode(struct samcoder *coder,short *fecbits,short *samples)
 	return rc;
 }
 
-static int statistic_ebits(const void *const realfrm,const size_t len,const void *const patfrm)
+static int statistic_ebits_physical(const void *const realfrm,const size_t len,const void *const patfrm)
 {
 	int i;
 	int cnt = 0;
@@ -157,7 +158,20 @@ static int statistic_ebits(const void *const realfrm,const size_t len,const void
 	return cnt;
 }
 
-int  samcoder_set_test_patdata(struct samcoder *coder, const unsigned char *  data)
+static int statistic_ebits_applayer(const void *const realbits,const size_t len,const void *const patbits)
+{
+	const unsigned char *hope = patbits;
+	const unsigned char *real = realbits;
+	int i,cnt = 0;
+	
+	for(i = 0; i < len; i++){
+		cnt += bitones8(real[i] ^ hope[i]);
+	}
+	
+	return cnt;
+}
+
+int  samcoder_set_test_patdata(struct samcoder *coder,const unsigned char *data)
 {
 	int fecsz;
 	unsigned char *tmp;
@@ -169,6 +183,8 @@ int  samcoder_set_test_patdata(struct samcoder *coder, const unsigned char *  da
 			return -1;
 		coder->patfrm = tmp;
 	}
+	
+	coder->patbits = data;
 	coder->fec->encode(data,coder->_nfecc,coder->patfrm);
 	return 0;
 }
@@ -184,13 +200,16 @@ int  samcoder_decode_verbose(struct samcoder *coder,short *fecbits,short *sample
 	size_t signs;
 	struct fec *fec = coder->fec;
 	
+	fecfrm_stat_clear(stat);
 	signs  =  coder->_nfecc * bits_per_fecc(fec);
 	
 	fec->designmap(fec,fecbits,signs,coder->fecc);
-	stat->ebits += statistic_ebits(coder->fecc,coder->_nfecc,coder->patfrm);
+	stat->ebits = statistic_ebits_physical(coder->fecc,coder->_nfecc,coder->patfrm);
 	rc = fec->decode_verbose(coder->fecc,coder->_nfecc,coder->bits,stat);
 	if(rc < 0)
 		return -2;
+	
+	stat->ebapp = statistic_ebits_applayer(coder->bits,coder->_nfecc,coder->patbits);
 	
 	codec2_decode(coder->codec,samples,coder->bits);
 	return 0;

@@ -7,17 +7,18 @@
 #define MODE_1200	CODEC2_MODE_1200
 #define MODE_2400	CODEC2_MODE_2400
 
-extern  const unsigned char dpat_tab[4][6];
+extern const unsigned char dpat_tab[4][6];
 
 typedef struct samcoder{
-	int 	      _codec2_mode;
-	int 		  _fec_mode;
-	size_t 		  _nfecc;
-	struct CODEC2  *codec;
-	struct fec 	   *fec;
-	unsigned char  *bits;
-	unsigned char  *fecc;
-	unsigned char  *patfrm;
+	int 	      		_codec2_mode;
+	int 		 		_fec_mode;
+	size_t 		  		_nfecc;
+	struct CODEC2  		*codec;
+	struct fec 	   		*fec;
+	unsigned char  		*bits;
+	unsigned char  		*fecc;
+	unsigned char  		*patfrm;
+	const unsigned char *patbits;
 }samcoder_t;
 
 struct samcoder* 
@@ -30,7 +31,7 @@ void samcoder_encode( struct samcoder *coder,short *samples,short *fecbits);
 int  samcoder_decode( struct samcoder *coder,short *fecbits,short *samples);
 void samcoder_encode_patdata(struct samcoder *coder,short *signs);
 int  samcoder_decode_verbose(struct samcoder *coder,short *fecbits,short *samples,fecfrm_stat_t *stat);
-int  samcoder_set_test_patdata(struct samcoder *coder, const unsigned char *data);
+int  samcoder_set_test_patdata(struct samcoder *coder,const unsigned char *data);
 //����ÿ֡��Ҫ������Ƶ������ѹ����fec����
 static inline int samcoder_samples_per_frame(struct samcoder *coder)
 {

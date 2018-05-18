@@ -9,6 +9,7 @@
 typedef struct errorInf{
 	UShort count;  //ͳ�ƴ������
 	UChar  location;  //��־����λ��
+	UChar  test[7];
 }errorInf;
 
 
@@ -38,9 +39,7 @@ typedef struct errorInf{
 //------------------------------------
 #define MATCH_THREAD           (MATCH_FRAME_HEAD_LEN - 21)
 
-
-//#define DSC_INFORMATION_LEN        22  //��ֵҲ����Ϊ21������ECC�����޸�----------------------------------------
-#define DSC_SEND_DATA_LEN          46  //���͸�ARM�����֡����
+#define DSC_SEND_DATA_LEN          46
 
 /************************************************** ����ԭ�� **************************************************/
 //����ԭ��

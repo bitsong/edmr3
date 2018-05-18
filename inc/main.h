@@ -8,15 +8,15 @@
 #include "system_time.h"
 //debug command
 
-#define VHF_DSC 		01
-#define VHF_DSC_ON		02
-#define VHF_DSC_OFF		03
-#define	PWB_STATUS		04
-#define PWB_ON			05
-#define PWB_OFF			06
-#define	DSC				07
-#define DSC_CH			08
-#define ADF4002_LD		09
+#define VHF_DSC 		1
+#define VHF_DSC_ON		2
+#define VHF_DSC_OFF		3
+#define	PWB_STATUS		4
+#define PWB_ON			5
+#define PWB_OFF			6
+#define	DSC				7
+#define DSC_CH			8
+#define ADF4002_LD		9
 #define RSSI_RD			10
 #define IF_AGC_ON		11
 #define IF_AGC_OFF		12
@@ -82,6 +82,7 @@
 #define DATA_END		218
 #define TEST_TX			300
 #define TEST_RX			301
+#define DSC_CNT			302
 
 #define WORK_MODE		190
 #define NORMAL_MODE		0
@@ -131,12 +132,12 @@ declare_message_type(message_t,struct mydata);
 
 
 struct dsc_fmt{
-	short int ch;				//要切换到的信道
-	short int res;				//保留，暂用于传送dsc消息体的长度
+	short int ch;
+	short int res;
 	union{
-		short 	reg[5];			//从arm接收到的信道参数
-		short 	code;			//切换成功后的应答
-		uint8_t msg[50];		//发送到arm的消息
+		short 	chnl[5];
+		short 	code;
+		uint8_t msg[50];
 	}un_dsc;
 };
 
@@ -149,14 +150,15 @@ struct dsc_msg_body{
 		struct dsc_fmt mb_dsc;
 		//other type...
 	}un;
-	#define ch_num	un.mb_dsc.ch
-	#define regs	un.mb_dsc.un_dsc.reg
-	#define r_code	un.mb_dsc.un_dsc.code
-	#define dsc_len	 un.mb_dsc.res				//dsc消息长度
+	#define chn		un.mb_dsc.ch
+	#define reserve	un.mb_dsc.res
+	#define channel	un.mb_dsc.un_dsc.chnl
+	#define rcode	un.mb_dsc.un_dsc.code
 	#define dsc_msg un.mb_dsc.un_dsc.msg
+	#define dsc_len un.mb_dsc.res
 };
 
-declare_message_type(dsc_message_t,struct dsc_msg_body);
+declare_message_type(msg_t,struct dsc_msg_body);
 
 extern unsigned int lmx_init[];
 

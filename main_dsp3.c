@@ -12,7 +12,7 @@
 #include "main.h"
 #include "audio_queue.h"
 #include "dsc_rx.h"
-#include "amc7823.h"
+#include "amc_adf.h"
 #include "samcoder.h"
 
 #define SIZE1	72
@@ -21,7 +21,9 @@
 CSL_GpioRegsOvly     gpioRegs = (CSL_GpioRegsOvly)(CSL_GPIO_0_REGS);
 
 //short buf_temp[16000];
-
+unsigned int dsc_ch[4]={231, 236, 238, 221};
+Clock_Handle clk0;
+unsigned int current_dscch;
 QUEUE_DATA_TYPE    dsc_buf[DSC_RX_BUF_LEN];
 short intersam[1200];
 short send_buf[960];
@@ -43,20 +45,20 @@ float channel_freq=0;
 float transmit_power;
 Short working_mode, rev_count;
 Queue q;
-float p_erate=0;
-fecfrm_stat_t fec_state= FECFRM_STAT_INITIALIZER;
+int p_index0=0;
 float error_rate[5];
 Short p_errorarray[256];
 Short p_arrayin[256][72];
 double sys_time, exec_time,per_time;
 float trans_k;
 int test_count0, test_count1,test_count2, test_count3,test_count4,test_count5;
-
+short  ebapp,eflink,ebphy,flink;
 extern void* bufRxPingPong[2];
 extern void* bufTxPingPong[2];
 extern int TxpingPongIndex,RxpingPongIndex;
 extern int p_count[P_LEN];
 extern int indexp;
+extern int DSC_TEST_CNT[25];
 
 /* private functions */
 Void smain(UArg arg0, UArg arg1);
@@ -64,6 +66,7 @@ Void task_enque(UArg arg0, UArg arg1);
 Void task_receive(UArg arg0, UArg arg1);
 Void task_modulate(UArg arg0, UArg arg1);
 Void hwiFxn(UArg arg);
+Void clk0Fxn(UArg arg0);
 Void DSCRxTask(UArg a0, UArg a1);
 Void data_send(uint8_t *buf_16);
 
@@ -72,7 +75,6 @@ extern int Rx_process(unsigned short* ad_data,	short* de_data);
 
 void data_process(float *buf_in, unsigned char *buf_out, unsigned int size);
 void eeprom_cache();
-void eeprom_init();
 void sys_configure(void);
 void dsp_logic();
 
@@ -101,7 +103,15 @@ Int main(Int argc, Char* argv[])
     if(Error_check(&eb)) {
         System_abort("main: failed to create application startup thread");
     }
-
+//    Clock_Handle clk0;
+	Clock_Params clkParams;
+	Clock_Params_init(&clkParams);
+	clkParams.period = 15;
+	clkParams.startFlag = FALSE;
+	clk0 =Clock_create(clk0Fxn, 2000, &clkParams, NULL);
+	if(NULL==clk0){
+		log_error("clk0 create failed");
+	}
     /* start scheduler, this never returns */
     BIOS_start();
 
@@ -141,9 +151,15 @@ Void smain(UArg arg0, UArg arg1)
     	log_error("amc7823 initial error:%d",status);
     else
     	log_info("amc7823 initial done.");
-    eeprom_init();
+    adf_init();
+    eeprom_cache();
     dac_write(0, eeprom_data[24]+eeprom_data[25]);
     dac_write(3, 0);
+
+    dac_write(1, 2.5);
+    dac_write(2, 2.5);//test
+    dac_write(4, 1.6);
+    dac_write(5, 2.5);
     transmit_power=eeprom_data[39];
     buf_transmit=(unsigned char*)malloc(RPE_DATA_SIZE/2*15);
     //task create
@@ -250,7 +266,8 @@ Void smain(UArg arg0, UArg arg1)
     		//RSSI_db=-0.16365*RSSI_db*RSSI_db-36.798*RSSI_db-2182.9;
     		//fitting : y = 0.071842*x^{3} + 25.165*x^{2} + 2939.6*x + 1.144e+05
     		RSSI_db=0.071842*powi(RSSI_db,3)+ 25.165*powi(RSSI_db,2)+ 2939.6*RSSI_db + 114395;
-
+    	if(RSSI_db<-135)
+    		RSSI_db=-135;
     	dsp_logic();
     }
 
@@ -274,6 +291,38 @@ Void hwiFxn(UArg arg)
 	enQueue(&q, flag);
 }
 
+/*
+ *  ======== clk0Fxn =======
+ */
+Void clk0Fxn(UArg arg0)
+{
+    static int count=0;
+    UInt32 timeout, timecount=0;
+
+//    Clock_Handle clk0 = Clock_getTimerHandle();
+    timecount = count++%4;
+//    System_printf("Current time count is%d \n",timecount);
+    test_count5=timecount;
+    adf_set_ch(dsc_ch[timecount]);
+    Clock_stop(clk0);
+    if(timecount==3){
+    	timeout=2000;
+    	count=0;
+    }
+    else
+    	timeout=1000;
+//    Clock_setPeriod(clk1, 6);
+    Clock_setTimeout(clk0, timeout);
+    Clock_start(clk0);
+    current_dscch=dsc_ch[timecount];
+}
+
+void clock_add(Clock_Handle handle, int ticks)
+{
+	Clock_stop(handle);
+	Clock_setTimeout(handle, ticks);
+	Clock_start(handle);
+}
 /*
  *  ======== DSCRxTask ========
  */
@@ -668,15 +717,12 @@ void iirFilter_AfterCodec(short *inBuf,short *outBuf,short len)
 float p_statics(short *pbufp, int index0)
 {
 	int i,j,csum;
-	float p_error_rate=0;
+	float p_error_rate=0;	//frame BER
     short data[4]={0},cdata[4]={0};
 	csum=0;
 
-	for(j=0;j<8;j++){
+	for(j=0;j<8;j++){		//bin2dec
 		for(i=0;i<4;i++){
-//			if(-1==pbufp[j+8*i+4])
-//				pbufp[j+8*i+4]=0;
-//				data[i]+=pbufp[j+8*i+4]<<j;
 			if(-1==pbufp[35-j-8*i])
 				pbufp[35-j-8*i]=0;
 				data[i]+=pbufp[35-j-8*i]<<j;
@@ -687,7 +733,7 @@ float p_statics(short *pbufp, int index0)
 		data[i]=0;
 	}
 //	p_errorarray[index0]=cdata[0];
-	for(i=0;i<3;i++)
+	for(i=0;i<3;i++)		//everyone compare with each other
 		for(j=i+1;j<4;j++){
 			if(cdata[i]==cdata[j]){
 				csum++;
@@ -695,7 +741,7 @@ float p_statics(short *pbufp, int index0)
 			}
 		}
 //	memset(cdata, 0, 8);
-	if(6==csum)
+	if(6==csum)			//the sum
 		p_error_rate=0;
 	else if(3==csum)
 		p_error_rate=0.25;
@@ -708,16 +754,34 @@ float p_statics(short *pbufp, int index0)
 	return p_error_rate;
 }
 
+
+Void statics_fec(fecfrm_stat_t fec_state)
+{
+	ebapp += fec_state.ebapp;
+	flink += (fec_state.efree + fec_state.fixed);
+	eflink+= fec_state.error;
+	ebphy += fec_state.ebits;
+}
+Void caculate_ber(short total_frame)
+{
+	//APP  /bit
+	error_rate[0]=(double)ebapp/(flink*8*18);
+	//LINK /FEC frame
+//	error_rate[1]=(double)eflink/(total_frame*18);
+	error_rate[1]=(double)total_frame/1000;
+	//PHY /bit
+	error_rate[2]=(double)ebphy/(total_frame*216);
+}
 Void task_receive(UArg arg0, UArg arg1)
 {
     Error_Block     eb;
 	uint8_t 		*buf = NULL;
     uint32_t		size;
-    Int status=0;
+    Int status=0,p2sum=0;
     Bool sp_init=FALSE;
-    static int sp_count, c_index, total_frames;
+    static short sp_count, total_frames;
 	short *pbuf, *pbuf2;
-	short i, j,	bit_data;
+	short i, j;
 	static short p_index;
     samcoder_t *dcoder0=samcoder_create(MODE_1200);
 	short frame0[72];
@@ -739,8 +803,7 @@ Void task_receive(UArg arg0, UArg arg1)
 	memcpy(syn_p, syn_p0, 144);
     log_info("-->task_receive:");
     Error_init(&eb);
-//    static float p_erate=0;
-//    fecfrm_stat_t fec_state= FECFRM_STAT_INITIALIZER;
+    fecfrm_stat_t fec_state;
     samcoder_set_test_patdata(dcoder0, dpat_tab[0]);
 
     while(1){
@@ -753,43 +816,30 @@ Void task_receive(UArg arg0, UArg arg1)
     		sys_time=system_time();
     		if(working_mode==DIGITAL_MODE){
         		pbuf=buf_de;
+        		memcpy(p_arrayin[p_index0],pbuf,72*2);//
         		pbuf+=36;
-        		if(pbuf[3]+pbuf[2]*2+pbuf[1]*4+pbuf[0]*8==0xf){
-        			testing_rx=TRUE;
+        		for(j=0; j<36; j++){
+        			if(pbuf[j]==-1)
+        				pbuf[j]=0;
+        			p2sum +=pbuf[j];
         		}
-    		}
-    		if(working_mode==DIGITAL_MODE && (testing_rx==TRUE)){
-    			test_count4++;
-    			p_erate+=p_statics(pbuf, c_index);
-    			if(p_errorarray[0]>249){
-    				p_errorarray[0]=0;
-    				testing_rx=FALSE;
-    				continue;
-    			}
-    			if(p_erate>10){
-        			error_rate[0]=p_erate/c_index+0.004*(c_index-total_frames);
-        			error_rate[1]=(double)fec_state.efree/(c_index*nfecs*3)-0.004*(c_index-total_frames);
-        			error_rate[2]=(double)fec_state.fixed/(c_index*nfecs*3);
-        			error_rate[3]=(double)fec_state.error/(c_index*nfecs*3)+0.004*(c_index-total_frames);
-        			error_rate[4]=(double)fec_state.ebits/(c_index*nbits*3)+0.004*(c_index-total_frames);
-        			for(i=0;i<5;i++)
-        			{
-        				if(error_rate[i]<0)
-        					error_rate[i]=0;
-        			}
-        			c_index=total_frames=0;
-            		p_erate=0;
+        		p_errorarray[p_index0++]=p2sum;
+        		if(p2sum>26){
+        			testing_rx=TRUE;
+        			total_frames++;
+        			test_count4++;
+        		}
+        		//test finish,submit result,test quit
+        		if(p2sum<10 && testing_rx==TRUE){
+        			caculate_ber(total_frames);
+        			p_index0=total_frames=0;
             		memset(p_errorarray, 0, 512);
-            		fec_state.ebits=fec_state.efree=fec_state.error=fec_state.fixed=0;
+            		ebapp=eflink=ebphy=flink=0;
         			rx_submit=1;
         			rx_flag=0;
         			continue;
-    			}
-
-    			if(p_errorarray[c_index]<256)	//if any frame lost , abandon it
-    				c_index=p_errorarray[c_index];
-    			c_index++;
-    			total_frames++;
+        		}
+        		p2sum=0;
     		}
     		if(working_mode==DIGITAL_MODE)
     			pbuf+=36;
@@ -798,6 +848,7 @@ Void task_receive(UArg arg0, UArg arg1)
     		for(i=0;i<3;i++){
     			if(testing_rx==TRUE){
     				samcoder_decode_verbose(dcoder0, pbuf, buf_send, &fec_state);
+    				statics_fec(fec_state);
     				pbuf+=72;
     			}else if(working_mode==DIGITAL_MODE){
     				samcoder_decode( dcoder0, pbuf, buf_send);
@@ -810,24 +861,6 @@ Void task_receive(UArg arg0, UArg arg1)
 //    				test_count4++;
     			}
     		}
-    		if(c_index>249 && c_index<=256){
-    			error_rate[0]=p_erate/c_index+0.004*(c_index-total_frames);
-    			error_rate[1]=(double)fec_state.efree/(c_index*nfecs*3)-0.004*(c_index-total_frames);
-    			error_rate[2]=(double)fec_state.fixed/(c_index*nfecs*3);
-    			error_rate[3]=(double)fec_state.error/(c_index*nfecs*3)+0.004*(c_index-total_frames);
-    			error_rate[4]=(double)fec_state.ebits/(c_index*nbits*3)+0.004*(c_index-total_frames);
-    			for(i=0;i<5;i++)
-    			{
-    				if(error_rate[i]<0)
-    					error_rate[i]=0;
-    			}
-    			c_index=total_frames=0;
-        		p_erate=0;
-        		memset(p_errorarray, 0, 512);
-        		fec_state.ebits=fec_state.efree=fec_state.error=fec_state.fixed=0;
-    			rx_submit=1;
-    			rx_flag=0;
-    		}
     	}
     	else  if(1==tx_flag){
        		if(working_mode==DIGITAL_MODE)
@@ -838,24 +871,24 @@ Void task_receive(UArg arg0, UArg arg1)
     		if(FALSE==Semaphore_pend(sem3,45))
     			continue;
     		while(rev_count-->0){
+    			//BER test
     			if(testing_tx==TRUE){
-    				if((sp_count==3||sp_init==FALSE) && p_index!=256){
+    				if((sp_count==3||sp_init==FALSE) && p_index!=252){
     					if(0==sp_count)
     						sp_init=TRUE;
-        				syn_p[36]=syn_p[37]=syn_p[38]=syn_p[39]=1;
-            			for(j=0;j<8;j++){
-            				bit_data=(p_index&(1<<j))>>j;
-            				if(0==bit_data)
-            					bit_data=-1;
-            				syn_p[71-j]=syn_p[63-j]=syn_p[55-j]=syn_p[47-j]=bit_data;
-            			}
+    					for(j=0; j<36; j++){			//set p2
+    						if(p_index<250)
+    							syn_p[36+j]=1;
+    						else
+    							syn_p[36+j]=-1;
+    					}
             			memcpy(p_arrayin[p_index],syn_p,72*2);
             			sp_count=0;
             			p_index++;
             			test_count1++;
             		    rrcFilter(syn_p, Buf10);
             		    from24To120d(Buf10,(float*)Buf5);
-    				}else if(sp_count==3 && p_index==256){
+    				}else if(sp_count==3 && p_index==252){
         				p_index=sp_count=0;
         				sp_init=FALSE;
         				memcpy(syn_p, syn_p0, 144);
@@ -869,24 +902,17 @@ Void task_receive(UArg arg0, UArg arg1)
         				memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
 //            			rx_flag=1;
             			continue;
-    				}else if(sp_init==TRUE || sp_count!=3){
+    				}else if(sp_count!=3){
     					samcoder_encode_patdata(dcoder0, frame0);
     					sp_count++;
 
             		    rrcFilter(frame0, Buf10);
             		    from24To120d(Buf10,(float*)Buf5);
     				}
-
+    				//speech send
     			}else if(working_mode==DIGITAL_MODE && (sp_count==3 || sp_init==FALSE)){    	    //send syn_p
     				if(0==sp_count)
     					sp_init=TRUE;
-//        	        for(j=0;j<16;j++){
-//        	        	syn_p[71-j]=(p_index&(1<<j))>>j;
-//        	        	if(syn_p[71-j]==0)
-//        	        		syn_p[71-j]=-1;
-//        	        }
-//        			if(++p_index==P_LEN)
-//        				p_index=0;
         			test_count3++;
         		    rrcFilter(syn_p, Buf10);
         		    from24To120d(Buf10,(float*)Buf5);
@@ -1209,9 +1235,10 @@ void sys_configure(void)
                              CSL_SYSCFG_PINMUX5_PINMUX5_23_20_MASK );
     syscfgRegs->PINMUX5   |= 0x00110111;
 
-    syscfgRegs->PINMUX6 &= ~(CSL_SYSCFG_PINMUX6_PINMUX6_23_20_MASK|
+    syscfgRegs->PINMUX6 &= ~(CSL_SYSCFG_PINMUX6_PINMUX6_15_12_MASK|
+    						CSL_SYSCFG_PINMUX6_PINMUX6_23_20_MASK|
     						CSL_SYSCFG_PINMUX6_PINMUX6_27_24_MASK);
-    syscfgRegs->PINMUX6  |= 0x08800000;
+    syscfgRegs->PINMUX6  |= 0x08808000;
 
     syscfgRegs->PINMUX7  &= ~(CSL_SYSCFG_PINMUX7_PINMUX7_11_8_MASK|
     						CSL_SYSCFG_PINMUX7_PINMUX7_15_12_MASK);
@@ -1224,16 +1251,21 @@ void sys_configure(void)
     						CSL_SYSCFG_PINMUX14_PINMUX14_7_4_MASK);
     syscfgRegs->PINMUX14 |= 0x00000088;
 
+    syscfgRegs->PINMUX18 &=~(CSL_SYSCFG_PINMUX18_PINMUX18_19_16_MASK);
+    syscfgRegs->PINMUX18 |= 0x00080000;
+
     syscfgRegs->PINMUX19 &=~(CSL_SYSCFG_PINMUX19_PINMUX19_27_24_MASK);
     syscfgRegs->PINMUX19 |= 0x08000000;
 
 	 /* Configure GPIO2_1 (GPIO2_1_PIN) as an input                            */
 	 CSL_FINS(gpioRegs->BANK[1].DIR,GPIO_DIR_DIR1,1);
 
-    //GP2[2]	CE
+    //GP2[2]	 NO USE
     CSL_FINS(gpioRegs->BANK[GP2].DIR,GPIO_DIR_DIR2,0);
 //    CSL_FINS(gpioRegs->BANK[1].OUT_DATA,GPIO_OUT_DATA_OUT2,0);
     CSL_FINS(gpioRegs->BANK[GP2].OUT_DATA,GPIO_OUT_DATA_OUT2,1);
+    //GP2[4]	 DSC_LOCK
+    CSL_FINS(gpioRegs->BANK[GP2].DIR,GPIO_DIR_DIR4,1);
 
     //GP3[12] LNA_ATT_EN
     CSL_FINS(gpioRegs->BANK[1].DIR,GPIO_DIR_DIR28,0);
@@ -1255,7 +1287,9 @@ void sys_configure(void)
     CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT6,0);
     CSL_FINS(gpioRegs->BANK[3].DIR,GPIO_DIR_DIR7,0);//RX_SW
     CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT7,1);
-
+    //GP8[13]
+    CSL_FINS(gpioRegs->BANK[4].DIR,GPIO_DIR_DIR13,0);//DSC_SEL
+    CSL_FINS(gpioRegs->BANK[4].OUT_DATA,GPIO_OUT_DATA_OUT13,1);
 }
 
 void ch_chPara(){
@@ -1296,8 +1330,8 @@ void dsp_logic()
     		msg_send->type=TEST_RX;
     		testing_rx=FALSE;
     		sprintf(msg_send->data.d,"%.6f",error_rate[0]);
-    		sprintf(msg_send->data.d+8,"%.6f",error_rate[3]);
-    		sprintf(msg_send->data.d+16,"%.6f",error_rate[4]);
+    		sprintf(msg_send->data.d+8,"%.6f",error_rate[1]);
+    		sprintf(msg_send->data.d+16,"%.6f",error_rate[2]);
 //    		memcpy(msg_send->data.d,(char *)error_rate,4);
 //    		memcpy(msg_send->data.d+4,(char *)(error_rate+1),4);
 //    		memcpy(msg_send->data.d+8,(char *)(error_rate+4),4);
@@ -1406,6 +1440,7 @@ void dsp_logic()
     		case RX_CH:
     		case RX_CHF:
 //    			log_info("rx_ch:%f",49.95+atof(msg_temp.data.d));
+    			dac_write(1, 2.5+(atof(msg_temp.data.d)-27.5)*0.1667);
     			LMX2571_FM_CAL(0,49.95+atof(msg_temp.data.d), 0);
     			lmx_init[53]=0xB83;
     			lmx_init[54]=lmx_init[55]=0x983;
@@ -1453,7 +1488,7 @@ void dsp_logic()
     	    	    log_warn("msgq out of memmory");
     	    	}
 //    			ad_value=temperature_read();
-    	    	ad_value=adc_read(1);
+    	    	ad_value=adc_read(4);
     	    	ad_value=(ad_value*1000-500)*0.1;
     		    msg_send->type=msg_temp.type;
     		    sprintf(msg_send->data.d,"%f",ad_value);
@@ -1472,11 +1507,11 @@ void dsp_logic()
     		case RSSTH:
     			RXSS_THRESHOLD=2*atoi(msg_temp.data.d)-125;
     			if(-125==RXSS_THRESHOLD)
-    				RXSS_THRESHOLD=-2500;
+    				RXSS_THRESHOLD=-250;
     			break;
     		case PA_CURRENT:
     		case P_CURRENT2:
-    			ad_value=adc_read(6)/0.3;
+    			ad_value=adc_read(2)/0.3;
 
     	    	msg_send=(message_t *)message_alloc(msgbuf[0],sizeof(message_t));
     	    	if(!msg_send){
@@ -1549,7 +1584,7 @@ void dsp_logic()
     	    	    log_warn("msgq out of memmory");
     	    	}
     			msg_send->type=V138;
-    			ad_value=adc_read(7);
+    			ad_value=adc_read(6);
     			ad_value=ad_value*8;
     			sprintf(msg_send->data.d,"%f",ad_value);
     			status=messageq_send(&msgq[0],(messageq_msg_t)msg_send,0,0,0);
@@ -1665,6 +1700,38 @@ void dsp_logic()
     		case TEST_TX:
     			testing_tx=TRUE;
     			break;
+    		case DSC_CNT:
+    	    	msg_send=(message_t *)message_alloc(msgbuf[0],sizeof(message_t));
+    	    	if(!msg_send){
+    	    	    log_warn("msgq out of memmory");
+    	    	}
+    			msg_send->type=DSC_CNT;
+    			memcpy(msg_send->data.d, (char *)DSC_TEST_CNT,100);
+    			status=messageq_send(&msgq[0],(messageq_msg_t)msg_send,0,0,0);
+    			if(status<0){
+    			    log_error("message send error");
+    			    message_free(msg_send);
+    			}
+    			break;
+    		case DSC_CH:
+    			adf_set_ch(atoi(msg_temp.data.d));
+    			break;
+    		case ADF4002_LD:
+    	    	msg_send=(message_t *)message_alloc(msgbuf[0],sizeof(message_t));
+    	    	if(!msg_send){
+    	    	    log_warn("msgq out of memmory");
+    	    	}
+    			msg_send->type=ADF4002_LD;
+    			sprintf(msg_send->data.d,"%d",CSL_FEXT(gpioRegs->BANK[1].IN_DATA,GPIO_IN_DATA_IN4));
+    			status=messageq_send_safe(&msgq[0],msg_send,0,0,0);
+    			if(status<0){
+    				log_error("message send error");
+    				message_free(msg_send);
+    			}
+    			break;
+    		case DSC:  //DSC_SEL
+    		    CSL_FINS(gpioRegs->BANK[4].OUT_DATA,GPIO_OUT_DATA_OUT13, atoi(msg_temp.data.d));
+    			break;
     		default:
     			log_error("unknown message  type is %d", msg_temp.type);
     			break;
@@ -1689,149 +1756,3 @@ void eeprom_cache()
 	    }
 	  }
 }
-
-
-void eeprom_init()
-{
-	short i;
-	float eeprom_data0[150]={255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,255
-			,1.6
-			,0.026
-			,1.8
-			,25
-			,1.8
-			,25
-			,1.8
-			,25
-			,1.6
-			,25
-			,1.6
-			,25
-			,1.6
-			,25
-			,1
-			,1
-			,1
-			,0.01
-			,85
-			,0.01
-			,65
-			,0.01
-			,45
-			,-0.01
-			,5
-			,-0.01
-			,-15
-			,-0.01
-			,-25
-			,0
-			,-0.00575
-			,-0.0115
-			,-0.01725
-			,-0.023
-			,-0.02875
-			,-0.0345
-			,-0.04025
-			,-0.046
-			,-0.05175
-			,-0.06325
-			,-0.069
-			,-0.07475
-			,-0.0805
-			,-0.08625
-			,-0.092
-			,-0.09775
-			,-0.1035
-			,-0.10925
-			,-0.115
-			,-0.12075
-			,-0.1265
-			,-0.13225
-			,-0.138
-			,-0.14375
-			,-0.1495
-			,-0.15525
-			,-0.161
-			,-0.16675
-			,70
-			,25
-			,120
-			,25
-			,70
-			,25
-			,0
-			,85
-			,0
-			,65
-			,0
-			,45
-			,0
-			,5
-			,0
-			,-15
-			,0
-			,-35
-			,10
-			,10
-			,10
-			,20
-			,1.5
-			,1.5
-			,1.5
-			,2
-			,2
-			,2
-			,2.5
-			,2.5
-			,2.5
-			,3
-			,3
-			,3
-			,1.25
-			,1.25
-			,1.25
-			,1.75
-			,1.75
-			,1.75
-			,2.25
-			,2.25
-			,2.25
-			,2.75
-			,2.75
-			,2.75
-			,0
-			,0
-			,0
-			,6
-			,6
-			,6};
-
-	for(i=0; i<150; i++){
-		eeprom_data[i]=eeprom_data0[i];
-	}
-}
-
-

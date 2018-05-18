@@ -2,7 +2,7 @@
 #define __AMC7823_H__
 
 
-#if 1
+#if 0
 /* AMC 1 parameter data */
 #define    AMC1_TYPE          AMC7823
 #define	   AMC1_VOLTAGE		  (2.5f)
@@ -62,6 +62,10 @@
 #define ERR_REGS3	(-3)
 #define ERR_REGS4	(-4)
 
+#define FUNCTION	1865874
+#define R_DIVIDER	1676
+#define N221		4352
+
 /* EXPORTED API  */
 void configureSPI(void);
 void Spi_dev_init();
@@ -71,5 +75,8 @@ float adc_read(unsigned int ch);
 void dac_write(unsigned int ch, float voltage);
 float temperature_read();
 float dac_read(unsigned int ch);
+
+extern void adf_init(void);
+extern void adf_set_ch(unsigned int ch);
 
 #endif//__amc7823_h_

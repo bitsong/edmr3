@@ -12,14 +12,16 @@
 //����d��bitλ
 #define BCORRECT(d,bit) ((d) ^ ((1UL) << bit))
 
-#define FECFRM_STAT_INITIALIZER {0,0,0,0}
-
 typedef struct fec_frame_statistics{
-	unsigned int efree;
-	unsigned int fixed;
-	unsigned int error;
-	unsigned int ebits;
+	unsigned char efree;
+	unsigned char fixed;
+	unsigned char error;
+	unsigned char ebits;
+	unsigned int  ebapp;
 }fecfrm_stat_t;
+
+#define FECFRM_STAT_INITILIZER (fecfrm_stat_t){0,0,0,0,0}
+#define fecfrm_stat_clear(stat)	*(stat) = FECFRM_STAT_INITILIZER;
 
 struct fec;
 
