@@ -147,9 +147,9 @@ Void smain(UArg arg0, UArg arg1)
     else
     	log_info("amc7823 initial done.");
     adf_init();
-    current_dscch=236;
+    current_dscch=231;
     eeprom_cache();
-    adf_set_ch(236);
+//    adf_set_ch(236);
     dac_write(0, eeprom_data[24]+eeprom_data[25]);
     dac_write(3, 0);
     dac_write(1, 2.5);
@@ -222,16 +222,16 @@ Void smain(UArg arg0, UArg arg1)
            System_abort("main: failed to create application DSCRxTask thread");
     }
 
-//    Timer_Params 		timerParams;
-//    Error_init(&eb);
-//    Timer_Params_init(&timerParams);
-//    timerParams.period =1200000;
-//    timer = Timer_create(1, clk0Fxn, &timerParams, &eb);
-//    if (timer == NULL) {
-//    	System_abort("Timer create failed");
-//    }
-//    else
-//    	log_info("Timer create success");
+    Timer_Params 		timerParams;
+    Error_init(&eb);
+    Timer_Params_init(&timerParams);
+    timerParams.period =1200000;
+    timer = Timer_create(1, clk0Fxn, &timerParams, &eb);
+    if (timer == NULL) {
+    	System_abort("Timer create failed");
+    }
+    else
+    	log_info("Timer create success");
 
     setup_TIMER(2, 119, hwiFxn);
 

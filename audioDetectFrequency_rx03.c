@@ -519,7 +519,7 @@ void toShort(float *inBuf,short *outBuf)
 		else if(inBuf[i]<-0.85)
 			inBuf[i]=-0.85;
 
-		outBuf[i] = (short)(inBuf[i]*0x7fff);
+		outBuf[i] = (short)(inBuf[i]*0x7fff*1.35);
 
 	}
 }
