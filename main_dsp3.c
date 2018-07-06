@@ -46,12 +46,10 @@ Int RXSS_THRESHOLD =0;
 float RSSI_db=0;
 float channel_freq=0;
 float transmit_power;
-Short working_mode, rev_count;
+Short working_mode ,dsc_status;
 Queue q;
 int p_index0=0;
 float error_rate[5];
-Short p_errorarray[256];
-Short p_arrayin[256][72];
 double sys_time, exec_time,per_time;
 float trans_k;
 int test_count0, test_count1,test_count2, test_count3,test_count4,test_count5;
@@ -59,14 +57,13 @@ short  ebapp,eflink,ebphy,flink;
 extern void* bufRxPingPong[2];
 extern void* bufTxPingPong[2];
 extern int TxpingPongIndex,RxpingPongIndex;
-extern int p_count[P_LEN];
 extern int indexp;
 extern int DSC_TEST_CNT[25];
 
 /* private functions */
 Void smain(UArg arg0, UArg arg1);
 Void task_enque(UArg arg0, UArg arg1);
-Void task_receive(UArg arg0, UArg arg1);
+Void task_io(UArg arg0, UArg arg1);
 Void task_modulate(UArg arg0, UArg arg1);
 Void hwiFxn(UArg arg);
 Void clk0Fxn(UArg arg0);
@@ -147,9 +144,9 @@ Void smain(UArg arg0, UArg arg1)
     else
     	log_info("amc7823 initial done.");
     adf_init();
-    current_dscch=236;
     eeprom_cache();
-    adf_set_ch(236);
+    current_dscch=231;
+    adf_set_ch(231);
     dac_write(0, eeprom_data[24]+eeprom_data[25]);
     dac_write(3, 0);
     dac_write(1, 2.5);
@@ -174,12 +171,12 @@ Void smain(UArg arg0, UArg arg1)
 #if 1
     Error_init(&eb);
     Task_Params_init(&taskParams);
-    taskParams.instance->name = "task_receive";
+    taskParams.instance->name = "task_io";
     taskParams.arg0 = (UArg)arg0;
     taskParams.arg1 = (UArg)arg1;
     taskParams.stackSize = 0x8000;
     taskParams.priority=3;
-    Task_create(task_receive, &taskParams, &eb);
+    Task_create(task_io, &taskParams, &eb);
     if(Error_check(&eb)) {
         System_abort("main: failed to create application 0 thread");
     }
@@ -222,16 +219,17 @@ Void smain(UArg arg0, UArg arg1)
            System_abort("main: failed to create application DSCRxTask thread");
     }
 
-//    Timer_Params 		timerParams;
-//    Error_init(&eb);
-//    Timer_Params_init(&timerParams);
-//    timerParams.period =1200000;
-//    timer = Timer_create(1, clk0Fxn, &timerParams, &eb);
-//    if (timer == NULL) {
-//    	System_abort("Timer create failed");
-//    }
-//    else
-//    	log_info("Timer create success");
+    Timer_Params 		timerParams;
+    Error_init(&eb);
+    Timer_Params_init(&timerParams);
+    timerParams.startMode= Timer_StartMode_USER;
+    timerParams.period =1200000;
+    timer = Timer_create(1, clk0Fxn, &timerParams, &eb);
+    if (timer == NULL) {
+    	System_abort("Timer create failed");
+    }
+    else
+    	log_info("Timer create success");
 
     setup_TIMER(2, 119, hwiFxn);
 
@@ -249,7 +247,7 @@ Void smain(UArg arg0, UArg arg1)
     	dsp_logic();
     }
 
-    //cleanup
+//cleanup:
 //        sync_send(SYNC_CODE_MSGOUT);
 //        sync_send(SYNC_CODE_NTFOUT);
 //        sync_send(SYNC_CODE_RPEOUT);
@@ -322,19 +320,19 @@ Void DSCRxTask(UArg a0, UArg a1)
 void LP_Filter(float *inBuf,float *outBuf)
 {
 	register short i = 0;
-	static float temp[992] = {0};
-	float coffe0=0.299496059427060,	coffe1=0.256986632618021, 	coffe2=0.150967710628479,	coffe3= 0.032995877067145,
-	coffe4=-0.045687558189818,		coffe5=-0.062214363053361,	coffe6=-0.030565720303875 , 	coffe7=0.012959340065669 ,
-	coffe8=0.035504661411791,  	coffe9=  0.026815438823179,	coffe10=0.000482815488849, 	coffe11=-0.020603625992256,
-	coffe12=-0.022150036648907, 		coffe13=-0.006883093026563,	coffe14=0.010689881755938,	coffe15=0.017054011686632,
-	coffe16= 0.009462869502823;
+	static float temp[352] = {0};
+	float coffe0=0.271241480518137,coffe1=0.239449787069302, coffe2= 0.157378145257887,coffe3=  0.058305139382982 ,
+	coffe4=-0.020800133712440,coffe5=-0.056459523840367,coffe6=-0.047850447855385,coffe7=-0.013826369480974  ,
+	coffe8=0.019517316087605, coffe9=  0.033169629000253,coffe10=0.023579105912583, coffe11=0.001367819251319  ,
+	coffe12=-0.017511867274160 , coffe13=-0.022085670223589 ,coffe14=-0.012012239345358 ,coffe15=0.003998245857162,
+	coffe16=0.014966385905624;
 
 	for(i = 0; i < 32; ++i)
-		temp[i] = temp[960 + i];
-	for(i=0; i<960;i++)
+		temp[i] = temp[320 + i];
+	for(i=0; i<320;i++)
 		temp[i+32] = inBuf[i];
 	//
-	for(i = 0; i < 960; ++i){
+	for(i = 0; i < 320; ++i){
 		outBuf[i] = temp[i+16]*coffe0
 		+(temp[i+17]+temp[i+15])*coffe1 + (temp[i+18]+temp[i+14])*coffe2  + (temp[i+19]+temp[i+13])*coffe3  + (temp[i+20]+temp[i+12])*coffe4
 		+(temp[i+21]+temp[i+11])*coffe5 + (temp[i+22]+temp[i+10])*coffe6  + (temp[i+23]+temp[i+9])*coffe7   + (temp[i+24]+temp[i+8])*coffe8
@@ -342,7 +340,6 @@ void LP_Filter(float *inBuf,float *outBuf)
 		+(temp[i+29]+temp[i+3])*coffe13 + (temp[i+30]+temp[i+2])*coffe14  + (temp[i+31]+temp[i+1])*coffe15  + (temp[i+32]+temp[i])*coffe16;
 	}
 }
-
 /*
  *预加重
  */
@@ -363,15 +360,15 @@ void sendPreEmphasis(short *inBuf,float *outBuf,short len)
 void from24To120(float *inBuf,float *outBuf,short len)
 {
 	short i;
-	static float tempBuf[967] = {0};
+	static float tempBuf[327] = {0};
 	float	coffe0=0.154830207920112,	coffe1=0.147009839249942,	coffe2=0.125337104718526,	coffe3=0.094608021712450,
 			coffe4=0.061139668733940,	coffe5=0.030930241474728,	coffe6=0.008127364075467,	coffe7=-0.005711418466492,
 			coffe8=-0.011436697663118,  coffe9=-0.011435901979223,	coffe10=-0.008517719961896, coffe11=-0.004993842265637,
 			coffe12=-0.002219513516004, coffe13=-0.000610415386896, coffe14=0.000034684251061,	coffe15=0.000140032519269;
 
 	for(i=0;i<7;i++)
-		tempBuf[i] = tempBuf[960+i];
-	for(i=0;i<960;i++)
+		tempBuf[i] = tempBuf[320+i];
+	for(i=0;i<320;i++)
 		tempBuf[i+7] = inBuf[i];
 
 		for(i=0;i<len;i++)
@@ -401,37 +398,37 @@ void from24To120(float *inBuf,float *outBuf,short len)
 //
 //}
 
-//void scopeLimit(short *inBuf,short len)
-//{
-//	short i = 0;
-//	for(i=0;i<len;i++)
-//	{
-//		if(inBuf[i]>18000)
-//			inBuf[i] = 18000;
-//		else if(inBuf[i]<-18000)
-//			inBuf[i] = -18000;
-//	}
-//}
+void scopeLimit(float *inBuf,short len)
+{
+	short i = 0;
+	for(i=0;i<len;i++)
+	{
+		if(inBuf[i]>16000.0)
+			inBuf[i] = 16000.0;
+		else if(inBuf[i]<-16000.0)
+			inBuf[i] = -16000.0;
+	}
+}
 
 void hpFilter(short *inBuf,short *outBuf)
 {
 	short i = 0;
-	static float x[962] = {0};
-	static float y[962] = {0};
+	static float x[322] = {0};
+	static float y[322] = {0};
 
-	x[0] = x[960];
-	x[1] = x[961];
+	x[0] = x[320];
+	x[1] = x[321];
 
-	y[0] = y[960];
-	y[1] = y[961];
+	y[0] = y[320];
+	y[1] = y[321];
 
-	for(i=0;i<960;i++)
+	for(i=0;i<320;i++)
 		x[i+2] = inBuf[i];
 
-	for(i=0;i<960;i++)
-		y[i+2] = 0.9816583*(x[i+2]-2*x[i+1]+x[i]) + 1.9629801*y[i+1] - 0.9636530*y[i];
+	for(i=0;i<320;i++)
+		y[i+2] = 0.937260390269893*(x[i+2]-2*x[i+1]+x[i]) + 1.870580640735279*y[i+1] - 0.878460920344291*y[i];
 
-	for(i=0;i<960;i++)
+	for(i=0;i<320;i++)
 		outBuf[i] = y[i+2];
 }
 
@@ -442,11 +439,10 @@ void hpFilter(short *inBuf,short *outBuf)
  */
 void dataFilterAndTrans(short *inBuf,float *outBuf,short len)
 {
-//	delDc(inBuf,len);
 	hpFilter(inBuf, inBuf);
 	sendPreEmphasis(inBuf,outBuf,len);		//input:outBuf,output:inBuf(inBuf as a temp buffer)
+	scopeLimit(outBuf,len);
 	LP_Filter(outBuf,outBuf);
-//	scopeLimit(inBuf,len);
 	from24To120(outBuf,outBuf,len);
 }
 
@@ -489,38 +485,7 @@ function: insert data 1:10  20 order
 inBuf size:72
 outBuf size:720
 */
-#if 0
-void rrcFilter(short *inBuf,float *outBuf)
-{
-	short i = 0;
-	static float temp[SIZE1+4] = {0};
 
-	const float coef0= 0.100000000000000, coef1= 0.096112668720556,
-		 coef2= 0.085202893267106, coef3= 0.069328801981117,coef4= 0.051318575730875, coef5= 0.034057202788830,
-		 coef6= 0.019804789400712, coef7= 0.009738296381340,coef8= 0.003832472937066, coef9= 0.001086839573313,
-		 coef10= 0.000000000000000,
-		coef11=0.000000000000000, coef12=0.000000000000000, coef13=0.000000000000000, coef14=0.000000000000000,
-		coef15=0.000000000000000,coef16=0.000000000000000;
-
-	for(i=0;i<4;i++)
-		temp[i] = temp[i+SIZE1];
-	for(i=0;i<SIZE1;i++)
-		temp[i+4] = inBuf[i];
-	for(i=0;i<SIZE1;i++)
-	{
-		outBuf[10*i]  = temp[i+1]*coef5  + temp[i+2]*coef5 + temp[i+3]*coef15+temp[i]*coef15;
-		outBuf[10*i+1]= temp[i+1]*coef6  + temp[i+2]*coef4 + temp[i+3]*coef14;
-		outBuf[10*i+2]= temp[i+1]*coef7  + temp[i+2]*coef3 + temp[i+3]*coef13;
-		outBuf[10*i+3]= temp[i+1]*coef8  + temp[i+2]*coef2 + temp[i+3]*coef12;
-		outBuf[10*i+4]= temp[i+1]*coef9  + temp[i+2]*coef1 + temp[i+3]*coef11;
-		outBuf[10*i+5]= temp[i+1]*coef10 + temp[i+2]*coef0 + temp[i+3]*coef10;
-		outBuf[10*i+6]= temp[i+1]*coef11 + temp[i+2]*coef1 + temp[i+3]*coef9;
-		outBuf[10*i+7]= temp[i+1]*coef12 + temp[i+2]*coef2 + temp[i+3]*coef8;
-		outBuf[10*i+8]= temp[i+1]*coef13 + temp[i+2]*coef3 + temp[i+3]*coef7;
-		outBuf[10*i+9]= temp[i+1]*coef14 + temp[i+2]*coef4 + temp[i+3]*coef6;
-	}
-}
-#else
 void rrcFilter(short *inBuf,float *outBuf)
 {
 	short i = 0;
@@ -549,133 +514,8 @@ void rrcFilter(short *inBuf,float *outBuf)
 		outBuf[10*i+9]= temp[i]*coef1  + temp[i+1]*coef9;
 	}
 }
-#endif
 
 
-/*
- *  ======== task_receive ========
- */
-#if 0
-Void task_receive(UArg arg0, UArg arg1)
-{
-    Error_Block         eb;
-	uint8_t 		*buf = NULL;
-    uint32_t		size;
-    Int status=0;
-//    static int txpingpongflag;
-    static int sp_count;
-	short *pbuf, *pbuf2;
-//	short buf_send[RPE_DATA_SIZE/2];
-	short i, j;
-	static short p_index;
-
-    samcoder_t *dcoder0=samcoder_create(MODE_1200);
-
-	short frame0[72];
-
-	short syn_p[72]={
-			 1, -1, -1,  1,  1, -1, -1,  1,  1, -1,  1, -1,
-			-1,  1,  1, -1, -1,  1 ,-1 , 1 ,-1,  1, -1,  1,
-			-1,  1,  1, -1,  1, -1, -1,  1, -1,  1,  1, -1,
-			 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-			 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-			 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
-	};
-
-    log_info("-->task_receive:");
-    Error_init(&eb);
-
-    while(1){
-    	if(1==tx_flag){
-//    		Semaphore_pend(sem3,BIOS_WAIT_FOREVER);
-    		if(FALSE==Semaphore_pend(sem3,45))
-    			continue;
-    		if(sp_count++<3){
-    			//    		txpingpongflag=(TxpingPongIndex)?0:1;
-    			size = RPE_DATA_SIZE;
-    			status = rpe_acquire_reader(prpe,(rpe_buf_t*)&buf,&size);
-    			if(status == ERPE_B_PENDINGATTRIBUTE){
-    				status = rpe_get_attribute(prpe,&attr,RPE_ATTR_FIXED);
-    				if(!status && attr.type == RPE_DATAFLOW_END){
-
-    					memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
-    					tx_flag=0;
-    					dac_write(3, 0);
-
-    					CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT6,0); //TX_SW
-    					CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT7,1);//RX_SW
-    					CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT13,0); //R:F1
-
-    					rx_submit=1;
-    					//    				log_info("data flow end!");
-    					continue;
-    				}
-				}else if(status < 0){
-//					if(status == ERPE_B_BUFEMPTY){
-//	//    			    log_info("rpe data empty! status = %d",status);
-//					}
-//					else{
-//						log_warn("rpe acquire data failed,status = %d",status);
-//					}
-					Task_sleep(1);
-					continue;
-				}
-	//    		data_process((short*)buf, buf_transmit, size);
-	//    		data_process((short*)buf, (unsigned char*)bufTxPingPong[txpingpongflag], size);
-
-//				per_time=system_time()-sys_time;
-//				sys_time=system_time();
-				samcoder_encode( dcoder0, (short *)buf, frame0);
-				rrcFilter(frame0,Buf10);
-				from24To120d(Buf10,(float*)Buf5);
-
-				status = rpe_release_reader_safe(prpe,buf,size);
-				if(status < 0){
-					log_warn("rpe release writer end failed!");
-					continue;
-				}
-    		}else
-    	    //send syn_p
-    		{
-    	        for(j=0;j<16;j++){
-    	        	syn_p[71-j]=(p_index&(1<<j))>>j;
-    	        	if(syn_p[71-j]==0)
-    	        		syn_p[71-j]=-1;
-    	        }
-    			if(++p_index==P_LEN)
-    				p_index=0;
-    		    rrcFilter(syn_p, Buf10);
-    		    from24To120d(Buf10,(float*)Buf5);
-    		    sp_count=0;
-    		}
-    	}
-    	else if(1==rx_flag){
-//    		Semaphore_pend(sem4,BIOS_WAIT_FOREVER);
-    		if(FALSE==Semaphore_pend(sem4,45))
-    			continue;
-    		test_count2++;
-//    		exec_time=system_time()-sys_time;
-//    		sys_time=system_time();
-    		pbuf=buf_de;
-    		pbuf2=buf_md;
-    		for(i=0;i<3;i++){
-    			if(working_mode==2){
-    				samcoder_decode( dcoder0, pbuf, buf_send);
-    				data_send((uint8_t*)buf_send);
-    				pbuf+=72;
-    				test_count1++;
-    			}else{
-    				data_send((uint8_t*)pbuf2);
-    				pbuf2+=320;
-    				test_count4++;
-    			}
-    		}
-    	}
-    	else
-    		Task_sleep(2);
-    }
-}
-#else
 /* 函数说明：IIR二阶滤波器
  *           2 Order
  *
@@ -721,7 +561,6 @@ float p_statics(short *pbufp, int index0)
 		for(j=i+1;j<4;j++){
 			if(cdata[i]==cdata[j]){
 				csum++;
-				p_errorarray[index0]=cdata[i];
 			}
 		}
 //	memset(cdata, 0, 8);
@@ -737,7 +576,6 @@ float p_statics(short *pbufp, int index0)
 	csum=0;
 	return p_error_rate;
 }
-
 
 Void statics_fec(fecfrm_stat_t fec_state)
 {
@@ -756,20 +594,55 @@ Void caculate_ber(short total_frame)
 	//PHY /bit
 	error_rate[2]=(double)ebphy/(total_frame*216);
 }
-Void task_receive(UArg arg0, UArg arg1)
+
+
+void date_rev(short *iobuf)
 {
-    Error_Block     eb;
 	uint8_t 		*buf = NULL;
     uint32_t		size;
-    Int status=0,p2sum=0;
+    Int status=0;
+
+    while(1==tx_flag){
+    	size = RPE_DATA_SIZE;
+    	status = rpe_acquire_reader(prpe,(rpe_buf_t*)&buf,&size);
+    	if(status == ERPE_B_PENDINGATTRIBUTE){
+    		status = rpe_get_attribute(prpe,&attr,RPE_ATTR_FIXED);
+    		if(!status && attr.type == RPE_DATAFLOW_END){
+    			memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
+    			tx_flag=0;
+    			dac_write(3, 0);
+    			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT6,0); //TX_SW
+    			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT7,1);//RX_SW
+    			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT13,0); //R:F1
+    			rx_submit=1;
+    			test_count5++;
+    			continue;
+    		}
+    	}else if(status < 0){
+    		Task_sleep(1);
+    		continue;
+    	}
+    	memcpy((uint8_t *)iobuf, buf, size);
+    	status = rpe_release_reader_safe(prpe,buf,size);
+    	if(status < 0){
+    		log_warn("rpe release writer end failed!");
+    		continue;
+    	}else
+    		break;
+    }
+    return;
+}
+
+Void task_io(UArg arg0, UArg arg1)
+{
     Bool sp_init=FALSE;
-    static short sp_count, total_frames;
+    static short sp_count;
 	short *pbuf, *pbuf2;
-	short i, j;
-	static short p_index;
+	short i;
+
     samcoder_t *dcoder0=samcoder_create(MODE_1200);
 	short frame0[72];
-	short outbuf[320];
+	short inbuf[320],outbuf[320];
 	const short syn_p0[72]={
 			 1, -1, -1,  1,  1, -1, -1,  1,  1, -1,  1, -1,
 			-1,  1,  1, -1, -1,  1 ,-1 , 1 ,-1,  1, -1,  1,
@@ -785,8 +658,8 @@ Void task_receive(UArg arg0, UArg arg1)
 	int nfecs=samcoder_fecs_per_frame(dcoder0);
 
 	memcpy(syn_p, syn_p0, 144);
-    log_info("-->task_receive:");
-    Error_init(&eb);
+    log_info("-->task_io:");
+
     fecfrm_stat_t fec_state;
     samcoder_set_test_patdata(dcoder0, dpat_tab[0]);
 
@@ -799,160 +672,56 @@ Void task_receive(UArg arg0, UArg arg1)
     		exec_time=system_time()-sys_time;
     		sys_time=system_time();
     		if(working_mode==DIGITAL_MODE){
-        		pbuf=buf_de;
-        		memcpy(p_arrayin[p_index0],pbuf,72*2);//
-        		pbuf+=36;
-        		for(j=0; j<36; j++){
-        			if(pbuf[j]==-1)
-        				pbuf[j]=0;
-        			p2sum +=pbuf[j];
-        		}
-        		p_errorarray[p_index0++]=p2sum;
-        		if(p2sum>32){
-        			testing_rx=TRUE;
-        			total_frames++;
-        			test_count4++;
-        		}
-        		//test finish,submit result,test quit
-        		if(p2sum<10 && testing_rx==TRUE){
-        			caculate_ber(total_frames);
-        			p_index0=total_frames=0;
-            		memset(p_errorarray, 0, 512);
-            		ebapp=eflink=ebphy=flink=0;
-        			rx_submit=1;
-        			rx_flag=0;
-        			continue;
-        		}
-        		p2sum=0;
+        		pbuf=buf_de+72;
     		}
-    		if(working_mode==DIGITAL_MODE)
-    			pbuf+=36;
     		else
     			pbuf2=buf_md;
+
     		for(i=0;i<3;i++){
-    			if(testing_rx==TRUE){
+    			if(working_mode==DIGITAL_MODE){
     				samcoder_decode_verbose(dcoder0, pbuf, buf_send, &fec_state);
-    				statics_fec(fec_state);
     				pbuf+=72;
-    			}else if(working_mode==DIGITAL_MODE){
-    				samcoder_decode( dcoder0, pbuf, buf_send);
-    				data_send((uint8_t*)buf_send);
-    				pbuf+=72;
-//    				test_count1++;
     			}else{
     				data_send((uint8_t*)pbuf2);
     				pbuf2+=320;
-//    				test_count4++;
     			}
     		}
+    		sp_count=0;
     	}
     	else  if(1==tx_flag){
-       		if(working_mode==DIGITAL_MODE)
-        			rev_count=1;
-        		else{
-        			rev_count=3;
-        		}
     		if(FALSE==Semaphore_pend(sem3,45))
     			continue;
-    		while(rev_count-->0){
-    			//BER test
-    			if(testing_tx==TRUE){
-    				if((sp_count==3||sp_init==FALSE) && p_index!=252){
-    					if(0==sp_count)
-    						sp_init=TRUE;
-    					for(j=0; j<36; j++){			//set p2
-    						if(p_index<250)
-    							syn_p[36+j]=1;
-    						else
-    							syn_p[36+j]=-1;
-    					}
-            			memcpy(p_arrayin[p_index],syn_p,72*2);
-            			sp_count=0;
-            			p_index++;
-            			test_count1++;
-            		    rrcFilter(syn_p, Buf10);
-            		    from24To120d(Buf10,(float*)Buf5);
-    				}else if(sp_count==3 && p_index==252){
-        				p_index=sp_count=0;
-        				sp_init=FALSE;
-        				memcpy(syn_p, syn_p0, 144);
-            			rpe_flush(prpe,RPE_ENDPOINT_READER,TRUE,&attr);//返回 flush的数据量
-            			dac_write(3, 0);
-            			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT6,0); //TX_SW
-            			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT7,1);//RX_SW
-            			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT13,0); //R:F1
-            			rx_submit=1;
-        				tx_flag=0;
-        				memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
-//            			rx_flag=1;
-            			continue;
-    				}else if(sp_count!=3){
-    					samcoder_encode_patdata(dcoder0, frame0);
-    					sp_count++;
-
-            		    rrcFilter(frame0, Buf10);
-            		    from24To120d(Buf10,(float*)Buf5);
-    				}
-    				//speech send
-    			}else if(working_mode==DIGITAL_MODE && (sp_count==3 || sp_init==FALSE)){    	    //send syn_p
-    				if(0==sp_count)
-    					sp_init=TRUE;
-        			test_count3++;
-        		    rrcFilter(syn_p, Buf10);
-        		    from24To120d(Buf10,(float*)Buf5);
-        		    sp_count=0;
-        		}
-    			else if(working_mode!=DIGITAL_MODE || sp_init==TRUE || sp_count!=3){
-        			size = RPE_DATA_SIZE;
-        			status = rpe_acquire_reader(prpe,(rpe_buf_t*)&buf,&size);
-        			if(status == ERPE_B_PENDINGATTRIBUTE){
-        				status = rpe_get_attribute(prpe,&attr,RPE_ATTR_FIXED);
-        				if(!status && attr.type == RPE_DATAFLOW_END){
-        					memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
-        					tx_flag=0;
-        					dac_write(3, 0);
-        					CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT6,0); //TX_SW
-        					CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT7,1);//RX_SW
-        					CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT13,0); //R:F1
-        					rx_submit=1;
-        					continue;
-        				}
-    				}else if(status < 0){
-    					Task_sleep(1);
-    					continue;
-    				}
-        			if(working_mode==DIGITAL_MODE){
-
-        				if(size!=RPE_DATA_SIZE)
-        					log_warn("data not enough,size=%d",size);
-        				iirFilter_AfterCodec((short *)buf, outbuf, 320);
-        				samcoder_encode( dcoder0, outbuf, frame0);
-        				rrcFilter(frame0,Buf10);
-        				from24To120d(Buf10,(float*)Buf5);
-        				sp_count++;
-        			}
-        			else{
-        				memcpy((uint8_t*)send_buf+(2-rev_count)*640, buf, size);
-        				if(0==rev_count){
-        					dataFilterAndTrans(send_buf,Buf5,960);
-        				}
-        			}
-    				status = rpe_release_reader_safe(prpe,buf,size);
-    				if(status < 0){
-    					log_warn("rpe release writer end failed!");
-    					continue;
-    				}
-        		}
-    		}
-
+       		if(dsc_status==0 && working_mode==DIGITAL_MODE){
+				//syn_p
+				if(dsc_status==0 && working_mode==DIGITAL_MODE && (sp_count==3 || sp_init==FALSE))
+				{
+					if(0==sp_count)
+						sp_init=TRUE;
+					test_count3++;
+					rrcFilter(syn_p, Buf10);
+					from24To120d(Buf10,(float*)Buf5);
+					sp_count=0;
+				}
+				//speech
+				date_rev(inbuf);
+				if(dsc_status==0 ){
+					iirFilter_AfterCodec(inbuf, outbuf, 320);
+					samcoder_encode( dcoder0, outbuf, frame0);
+					rrcFilter(frame0,Buf10);
+					from24To120d(Buf10,(float*)Buf5);
+					sp_count++;
+				}
+       		}
+       		else{
+    			date_rev(inbuf);
+    			memcpy((uint8_t*)send_buf, (uint8_t*)inbuf, 640);
+				dataFilterAndTrans(send_buf,Buf5,320);
+       		}
     	}
     	else
-    		Task_sleep(2);
+    		Task_sleep(1);
     }
 }
-
-#endif
-
 
 Void task_modulate(UArg arg0, UArg arg1)
 {
@@ -962,7 +731,7 @@ Void task_modulate(UArg arg0, UArg arg1)
 
 	do{
 		while(1==tx_flag){
-			if(working_mode==DIGITAL_MODE){
+			if(dsc_status==0 && working_mode==DIGITAL_MODE){
 				total_count=3;
 			}
 			else{
@@ -993,43 +762,23 @@ void data_process(float *buf_in, unsigned char *buf_out, unsigned int size)
 	reg_16 reg16;
 	float k;
 	static float factor;
-//	static int count12=0;
-//	int i1,i2;
-//	static int index;
-	if(working_mode==DIGITAL_MODE)
-		k=260000;
+
+	if(dsc_status==0 && working_mode==DIGITAL_MODE)
+		k=160000;
 	else
-		k=3;
+		k=5.8;
 	factor=FSK_FAST_SPI_calc();
 	trans_k=factor;
 
-//	for(i1=0;i1<1200;i1++)
-//		buf_temp[i1]=2000*sin(2*Pi*i1*450/120000);
-//	for(i1=1200;i1<2400;i1++)
-//		buf_temp[i1]=2000*sin(2*Pi*i1*3*450/120000);
 	tempdata=0;
     for(tempCount=0;tempCount<size;tempCount++)
     {
-
     	intersam[tempCount]=buf_in[tempCount]*k;
-
-//    	if(index<14400)
-//    		buf_temp[index]=intersam[tempCount];
-
-    	//Interpolation
-//    	reg16.all=(unsigned short)(factor*(buf_temp[tempCount+count12*1200]));
     	reg16.all=(unsigned short)(factor*(intersam[tempCount]));
-//    	if(++index==14400)
-//    		index=0;
-
     	((uint8_t *)buf_out)[tempdata++] 	 	 = reg16.dataBit.data0;
     	((uint8_t *)buf_out)[tempdata++] 	 	 = reg16.dataBit.data1;
     	((uint8_t *)buf_out)[tempdata++] 	     = (uint8_t)33;
-
     }
-//    count12++;
-//    if(2==count12)
-//    	count12=0;
 }
 
 
@@ -1038,8 +787,6 @@ void data_process(float *buf_in, unsigned char *buf_out, unsigned int size)
  */
 Void data_send(uint8_t *buf_16)
 {
-//    struct rpe *prpe = NULL;
-//    prpe=&rpe[0];
 	uint8_t 		*buf = NULL;
     uint32_t		size;
     Int status=0;
@@ -1055,10 +802,8 @@ Void data_send(uint8_t *buf_16)
 	        size=RPE_DATA_SIZE;
 	        continue;
 		}
-
 		//silence
-
-		if(working_mode==DIGITAL_MODE){
+		if(dsc_status==0 && working_mode==DIGITAL_MODE){
 			memcpy(buf,(unsigned char*)buf_16,size);	//buf_16: data to be sent
 		}else{
 		    if(RSSI_db<RXSS_THRESHOLD){
@@ -1089,7 +834,6 @@ Void data_send(uint8_t *buf_16)
         }else
         	break;
     }
-
     return;
 }
 
@@ -1110,24 +854,7 @@ void data_extract(unsigned char *input, unsigned char *output)
 /*
  *  ======== task_enque ========
  */
-#if 0
-Void task_enque(UArg arg0, UArg arg1)
-{
-	extern audioQueue audioQ;
-	extern AudioQueue_DATA_TYPE audioQueueRxBuf[];
-	unsigned short buf_16[REC_BUFSIZE/3] = {0};
-	static short pingpongflag;
 
-	do{
-		Semaphore_pend(sem1,BIOS_WAIT_FOREVER);
-
-		pingpongflag=RxpingPongIndex?0:1;
-		data_extract((unsigned char*)bufRxPingPong[pingpongflag],(unsigned char*)buf_16);
-		Rx_process(buf_16,buf_de);
-		data_send((uint8_t*)buf_de);
-	}while(1);
-}
-#else
 
 Void task_enque(UArg arg0, UArg arg1)
 {
@@ -1161,8 +888,6 @@ Void task_enque(UArg arg0, UArg arg1)
 		}
 	}while(1);
 }
-
-#endif
 
 void sys_configure(void)
 {
@@ -1252,6 +977,18 @@ void ch_chPara(){
 
 	for (tempCount = 0; tempCount < 36; tempCount++){
 	    reg_24data.all=lmx_init[45+tempCount/3];
+	    buf_transmit[tempCount++] = reg_24data.dataBit.data0;
+	    buf_transmit[tempCount++] = reg_24data.dataBit.data1;
+	    buf_transmit[tempCount]   = reg_24data.dataBit.data2;
+	}
+}
+
+void ch_init(){
+	reg_24 reg_24data;
+	uint32_t tempCount=0;
+	LMX2571_INIT_CAL(channel_freq);
+	for (tempCount = 0; tempCount < 135; tempCount++){
+	    reg_24data.all=lmx_init[tempCount/3];
 	    buf_transmit[tempCount++] = reg_24data.dataBit.data0;
 	    buf_transmit[tempCount++] = reg_24data.dataBit.data1;
 	    buf_transmit[tempCount]   = reg_24data.dataBit.data2;
@@ -1547,7 +1284,7 @@ void dsp_logic()
     	    	    goto go_break;
     	    	}
     			msg_send->type=V138;
-    			ad_value=adc_read(6);
+    			ad_value=adc_read(3);
     			ad_value=ad_value*8;
     			sprintf(msg_send->data.d,"%f",ad_value);
     			status=messageq_send(&msgq[0],(messageq_msg_t)msg_send,0,0,0);
@@ -1666,6 +1403,9 @@ void dsp_logic()
     		case WORK_MODE:
     			working_mode=atoi(msg_temp.data.d);
     			break;
+    		case DSC_MODE:
+    			dsc_status=atoi(msg_temp.data.d);
+    			break;
     		case TEST_TX:
     			testing_tx=TRUE;
     			break;
@@ -1709,6 +1449,12 @@ go_break:
 				break;
     		}
     }
+//    if(0==CSL_FEXT(gpioRegs->BANK[3].IN_DATA,GPIO_IN_DATA_IN12)){
+//    	ch_init();
+//		Task_sleep(10);
+//		memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
+//    }
+
 out:
 	return;
 }

@@ -727,7 +727,7 @@ UChar  MSK_GetInformationLen(UShort *frameBuf){
 					len = singleFrameLen(frameBuf, eos_temp, eos_i);
 					break;
 		default:
-					printf("error occur\n");
+//					printf("error occur\n");
 					len = 0;
 					break;
 	}

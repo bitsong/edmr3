@@ -30,7 +30,7 @@
 #else
 /* AMC 1 parameter data */
 #define    AMC1_TYPE          AMC7823
-#define	   AMC1_VOLTAGE		  (5)
+#define	   AMC1_VOLTAGE		  (5.0f)
 #define    AMC1_RESOLUTION	  (4096)
 #define    AMC1_SPIPORT       (0)
 #define    AMC1_SPIREGS       (0x7040)
@@ -62,7 +62,8 @@
 #define ERR_REGS3	(-3)
 #define ERR_REGS4	(-4)
 
-#define FUNCTION	1865874
+//#define FUNCTION	1865874 //1C7892  //1867410 1C7E92 fast lock enable
+#define FUNCTION	2095250 //1FF892
 #define R_DIVIDER	1676
 #define N221		4352
 

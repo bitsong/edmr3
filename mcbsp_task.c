@@ -437,17 +437,32 @@ void _task_mcbsp(void)
     {
         memset((uint8_t *)bufTxPingPong[count], 0, BUFSIZE);
         LMX2571_FM_CAL( 0,  77.45, 0);//415.125 	156.525;
-        for (tempCount = 0; tempCount < 162; tempCount++){
+#if 0
+        for (tempCount = 0; tempCount < 135; tempCount++){
         		reg_24data.all=lmx_init[tempCount/3];
                	((uint8_t *)bufTxPingPong[count])[tempCount++] = reg_24data.dataBit.data0;
                	((uint8_t *)bufTxPingPong[count])[tempCount++] = reg_24data.dataBit.data1;
                	((uint8_t *)bufTxPingPong[count])[tempCount]   = reg_24data.dataBit.data2;
         }
-        for (tempCount = 162; tempCount < BUFSIZE; tempCount++){
+        for (tempCount = 135; tempCount < BUFSIZE; tempCount++){
         	((uint8_t *)bufTxPingPong[count])[tempCount++] =0x80;
         	((uint8_t *)bufTxPingPong[count])[tempCount++] =0x80;
         	((uint8_t *)bufTxPingPong[count])[tempCount]   = 0x80;
         }
+#else
+
+        for (tempCount = 0; tempCount < BUFSIZE-135; tempCount++){
+        	((uint8_t *)bufTxPingPong[count])[tempCount++] =0x80;
+        	((uint8_t *)bufTxPingPong[count])[tempCount++] =0x80;
+        	((uint8_t *)bufTxPingPong[count])[tempCount]   = 0x80;
+        }
+        for (tempCount = BUFSIZE-135; tempCount < BUFSIZE; tempCount++){
+        		reg_24data.all=lmx_init[(135-BUFSIZE+tempCount)/3];
+               	((uint8_t *)bufTxPingPong[count])[tempCount++] = reg_24data.dataBit.data0;
+               	((uint8_t *)bufTxPingPong[count])[tempCount++] = reg_24data.dataBit.data1;
+               	((uint8_t *)bufTxPingPong[count])[tempCount]   = reg_24data.dataBit.data2;
+        }
+#endif
     }
     memset(buf_transmit,0x80, BUFSIZE);
     memcpy((unsigned char*)bufTxPingPong[1],buf_transmit,BUFSIZE);

@@ -85,11 +85,12 @@
 #define DSC_CNT			302
 
 #define WORK_MODE		190
+#define DSC_MODE		191
 #define NORMAL_MODE		0
 #define ENHANCE_MODE	1
 #define DIGITAL_MODE	2
 #define Pi			3.1415926f
-#define P_LEN		10000
+//#define P_LEN		10000
 
 #define SYNC_CODE_PREPARE	100
 #define RPE_DATAFLOW_END	101
@@ -164,5 +165,6 @@ extern unsigned int lmx_init[];
 
 extern void LMX2571_FM_CAL(unsigned short ch, double fm, unsigned char vco);
 extern float  FSK_FAST_SPI_calc(void);
+extern void LMX2571_INIT_CAL(double fm);
 
 #endif	//__MAIN_H__

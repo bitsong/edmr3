@@ -23,15 +23,14 @@ extern Short working_mode;
 #define ORDER_3K		32
 #define RSSI_AVR	10
 
-#define TH1	6.0f
-#define TH2 3.5f
+#define TH1	1.5f
+#define TH2 1.65f
 
 float tempIn_1[244] = {0};
 float tempOut_1[244] = {0};
 
-const float DeEm=0.91;
-int indexp=0;
-int  p_count[P_LEN]; //GSW  20mins
+float th1_data, th2_data=0.91;
+//int  p_count[P_LEN]; //GSW  20mins
 float P_rrcpf[36];  //GSW 用来存放帧头
 /* 函数说明：在寻找P帧之前，匹配滤波
  *           20 Order
@@ -262,11 +261,14 @@ void detectFreq(float *inBuf,float *outBuf)
 	for(i=0;i<SEND_SIZE;i++)
 	{
 		reverseRSSI = temp[3+5*i]*temp[3+5*i] + (0.0625*(9*(temp[4+5*i]-temp[2+5*i])+temp[6+5*i]-temp[i*5])) * (0.0625*(9*(temp[4+5*i]-temp[2+5*i])+temp[6+5*i]-temp[i*5]));
+		reverseRSSI *=2;
 		if(reverseRSSI<0.000001&&reverseRSSI>-0.000001)
 			continue;
 		outBuf[i] = (temp[3+5*i] * temp[4+5*i] + 0.00390625 * (9*temp[4+5*i] - 9*temp[2+5*i] + temp[6+5*i] - temp[5*i]) * (9*temp[5+5*i] - 9*temp[3+5*i] + temp[7+5*i] - temp[1+5*i]))/reverseRSSI;
-//		if(outBuf[i]>0.3 || outBuf[i]<-0.3)
-//			outBuf[i] = 0;
+		if(outBuf[i]>0.18 )
+			outBuf[i] = 0.18;
+		else if(outBuf[i]<-0.18)
+			outBuf[i] = -0.18;
 	}
 }
 
@@ -283,6 +285,7 @@ void ddetectFreq(float *inBuf,float *outBuf)
 	for(i=0;i<SEND_SIZE;i++)
 	{
 		reverseRSSI = temp[3+5*i]*temp[3+5*i] + (0.0625*(9*(temp[4+5*i]-temp[2+5*i])+temp[6+5*i]-temp[i*5])) * (0.0625*(9*(temp[4+5*i]-temp[2+5*i])+temp[6+5*i]-temp[i*5]));
+//		reverseRSSI *=2;
 		if(reverseRSSI<0.000001&&reverseRSSI>-0.000001)
 			continue;
 		outBuf[i] = (temp[3+5*i] * temp[4+5*i] + 0.00390625 * (9*temp[4+5*i] - 9*temp[2+5*i] + temp[6+5*i] - temp[5*i]) * (9*temp[5+5*i] - 9*temp[3+5*i] + temp[7+5*i] - temp[1+5*i]))/reverseRSSI;
@@ -318,7 +321,7 @@ void detectFreqEnhance(float *inBuf,float *outBuf)
 		rssi2 = temp[5*i+3]*temp[5*i+3] + 0.25*(temp[5*i+4]-temp[5*i+2])*(temp[5*i+4]-temp[5*i+2]);
 		rssi3 = temp[5*i+4]*temp[5*i+4] + 0.25*(temp[5*i+5]-temp[5*i+3])*(temp[5*i+5]-temp[5*i+3]);
 		rssi4 = temp[5*i+5]*temp[5*i+5] + 0.25*(temp[5*i+6]-temp[5*i+4])*(temp[5*i+6]-temp[5*i+4]);
-		outBuf[i] = (m0+m1+m2+m3+m4)/(rssi0+rssi1+rssi2+rssi3+rssi4);
+		outBuf[i] = (m0+m1+m2+m3+m4)/(rssi0+rssi1+rssi2+rssi3+rssi4)*0.5;
 	}
 }
 
@@ -723,6 +726,7 @@ static short matchSYN(float *inBuf,float *outBuf,short len)
 			carelessMatchRate = getMatchRate_TH1(tempBuf,3*i,36);
 			if(carelessMatchRate >= TH1)
 			{
+				th1_data=carelessMatchRate;
 				if(i==0)
 					j = 0;
 				else if(i==1)
@@ -738,6 +742,7 @@ static short matchSYN(float *inBuf,float *outBuf,short len)
 						{
 							maxMatchRate = carefulMatchRate;
 							Fine_Sca_Count = 3*i+j;
+							th2_data=maxMatchRate;
 						}
 						else
 							continue;
@@ -750,7 +755,7 @@ static short matchSYN(float *inBuf,float *outBuf,short len)
 									continue;
 							}
 				}
-				if(maxMatchRate>TH2)
+				if(maxMatchRate>=TH2)
 				{
 					for(k=Fine_Sca_Count;k<index;k++)
 						outBuf[p++] = tempBuf[k];   //1205   tempBuf[k]
