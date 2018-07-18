@@ -25,8 +25,8 @@ CSL_GpioRegsOvly     gpioRegs = (CSL_GpioRegsOvly)(CSL_GPIO_0_REGS);
 
 //short buf_temp[16000];
 Timer_Handle 		timer;
-const unsigned int dsc_ch[4]={231, 236, 238, 221};
-unsigned int current_dscch, power_index;
+unsigned int dsc_ch[4]={231, 236, 238, 221};
+unsigned int current_dscch;
 QUEUE_DATA_TYPE    dsc_buf[DSC_RX_BUF_LEN];
 short intersam[1200];
 short send_buf[960];
@@ -59,7 +59,7 @@ short  ebapp,eflink,ebphy,flink;
 extern void* bufRxPingPong[2];
 extern void* bufTxPingPong[2];
 extern int TxpingPongIndex,RxpingPongIndex;
-//extern int indexp;
+extern int indexp;
 extern int DSC_TEST_CNT[25];
 extern Int BUFSIZE;
 /* private functions */
@@ -1380,31 +1380,6 @@ void ch_init(){
     }
 }
 
-void power_ctrl(float freq)
-{
-	unsigned int freq_index=0;
-	float freq_section;
-
-	freq_index=(freq-27.5)/2;
-	if(freq_index>=6)
-	{
-		log_error("bad frequency");
-		return;
-	}
-
-	freq_section=27.5+2*freq_index;
-	if(0==power_index)
-		freq_index=freq_index+60;
-	else
-		freq_index=freq_index+67;
-//	freq_index=freq_index+53+power_index*14;
-	if(freq-freq_section<0.001){
-		transmit_power = eeprom_data[freq_index];
-	}
-	else{
-		transmit_power = (eeprom_data[freq_index+1]-eeprom_data[freq_index])*(freq-freq_section)/2 + eeprom_data[freq_index];
-	}
-}
 
 
 void dsp_logic()
@@ -1470,8 +1445,7 @@ void dsp_logic()
     			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT6,1); //TX_SW
     			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT13,1); //T:F2
     		    //TX_DAC
-    			power_ctrl(channel_freq);
-    		    dac_write(3, transmit_power);
+    		    dac_write(3, transmit_power); //1w
     			rx_flag=0;
     			tx_flag=1;
 //    			if(working_mode==DIGITAL_MODE){
@@ -1608,12 +1582,10 @@ void dsp_logic()
     		    }
     		    break;
     		case H_TX:
-    			power_index=1;
-//    			transmit_power=eeprom_data[28];
+    			transmit_power=eeprom_data[28];
     			break;
     		case L_TX:
-    			power_index=0;
-//    			transmit_power=eeprom_data[39];
+    			transmit_power=eeprom_data[39];
     			break;
     		case RSSTH:
     			RXSS_THRESHOLD=2*atoi(msg_temp.data.d)-125;
