@@ -1,0 +1,34 @@
+sylink_test.zip: Platform.xdc
+Platform.xdc:
+sylink_test.zip: Platform.xs
+Platform.xs:
+sylink_test.zip: config.bld
+config.bld:
+sylink_test.zip: package/.vers_b160
+package/.vers_b160:
+sylink_test.zip: package/.vers_g180
+package/.vers_g180:
+sylink_test.zip: package/.vers_r170
+package/.vers_r170:
+sylink_test.zip: package/.xdc-z52
+package/.xdc-z52:
+sylink_test.zip: package/build.cfg
+package/build.cfg:
+sylink_test.zip: package/package.bld.xml
+package/package.bld.xml:
+sylink_test.zip: package/package.defs.h
+package/package.defs.h:
+sylink_test.zip: package/package_sylink_test.c
+package/package_sylink_test.c:
+sylink_test.zip: package/sylink_test.ccs
+package/sylink_test.ccs:
+sylink_test.zip: package/sylink_test.class
+package/sylink_test.class:
+sylink_test.zip: package/sylink_test.java
+package/sylink_test.java:
+sylink_test.zip: package/sylink_test.sch
+package/sylink_test.sch:
+sylink_test.zip: package.bld
+package.bld:
+sylink_test.zip: package.xdc
+package.xdc:

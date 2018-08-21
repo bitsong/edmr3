@@ -2,9 +2,8 @@
 /* ========================================================================== */
 /*                            INCLUDE FILES                                   */
 /* ========================================================================== */
-
-#include <ti/sysbios/BIOS.h>
 #include <xdc/std.h>
+#include <ti/sysbios/BIOS.h>
 #include <ti/sysbios/knl/Task.h>
 #include <ti/sysbios/knl/Semaphore.h>
 #include <string.h>
@@ -50,10 +49,8 @@ extern Semaphore_Handle sem1, sem2;
 /* Number of MCBSP Frame structures used for submit channel */
 #define NUM_OF_MCBSP_FRAMES 1
 
-Int BUFSIZE=3600;
-int count1;
-
-
+//Int BUFSIZE=3600;
+//extern const Int BUFSIZE;
 /*============================================================================*/
 /*                            GLOBAL VARIABLES                                */
 /*============================================================================*/
@@ -273,14 +270,13 @@ void mcbspAppCallback(void* arg, Mcbsp_IOBuf *ioBuf)
     	TxpingPongIndex=(TxpingPongIndex)?0:1;
     	if(1==tx_flag){
     		Semaphore_post(sem2);
-    		count1++;
 //    		tx_submit=1;
     	}
 
     }
     else if (mode == MCBSP_MODE_INPUT)
     {
-//        memcpy(buf_adc,(unsigned char*)bufRxPingPong[RxpingPongIndex],REC_BUFSIZE);
+//        memcpy(buf_adc,(unsigned char*)bufRxPingPong[RxpingPongIndex],BUFSIZE);
         RxpingPongIndex=(RxpingPongIndex)?0:1;
         if(1==rx_flag)
         	Semaphore_post(sem1);
@@ -315,8 +311,8 @@ void _task_mcbsp(void)
     /**< Queue to manage floating packets in DMA                              */
     Queue_Struct  txQueueFloatingList, rxQueueFloatingList;
 
-    uint32_t count   = 0, tempCount = 0;
-    int32_t  status  = 0;
+    uint32_t count   = 0;
+    int32_t  status  = 0, tempCount = 0;
     int32_t  txChanMode = MCBSP_MODE_OUTPUT;
     int32_t  rxChanMode = MCBSP_MODE_INPUT;
 //    uint32_t mcbspTxDone = 0, mcbspRxDone = 0;
@@ -393,7 +389,7 @@ void _task_mcbsp(void)
     /* create the ping pong buffers required for the TX and RX operations */
     for (count = 0; count < (NUM_BUFS+1); count++)
     {
-        bufRxPingPong[count] = (uint8_t *)Osal_mcbspDataBufferMalloc(REC_BUFSIZE);
+        bufRxPingPong[count] = (uint8_t *)Osal_mcbspDataBufferMalloc(BUFSIZE);
         bufTxPingPong[count] = (uint8_t *)Osal_mcbspDataBufferMalloc(BUFSIZE);
 
         if (bufTxPingPong[count] == NULL)
@@ -411,7 +407,7 @@ void _task_mcbsp(void)
     for (count = 0; count < (NUM_BUFS); count++)
     {
         bufTx[count] = (uint8_t *)Osal_mcbspDataBufferMalloc(BUFSIZE);
-        bufRx[count] = (uint8_t *)Osal_mcbspDataBufferMalloc(REC_BUFSIZE);
+        bufRx[count] = (uint8_t *)Osal_mcbspDataBufferMalloc(BUFSIZE);
 
         if (bufTx[count] == NULL)
         {
@@ -451,79 +447,73 @@ void _task_mcbsp(void)
         }
 #else
 
-        for (tempCount = 0; tempCount < BUFSIZE-135; tempCount++){
-        	((uint8_t *)bufTxPingPong[count])[tempCount++] =0x80;
-        	((uint8_t *)bufTxPingPong[count])[tempCount++] =0x80;
-        	((uint8_t *)bufTxPingPong[count])[tempCount]   = 0x80;
+        for (tempCount = 0; tempCount < BUFSIZE; tempCount++){
+        	((uint8_t *)bufTxPingPong[count])[tempCount++] =0xFF;
+        	((uint8_t *)bufTxPingPong[count])[tempCount++] =0xFF;
+        	((uint8_t *)bufTxPingPong[count])[tempCount]   =0xFF;
         }
-        for (tempCount = BUFSIZE-135; tempCount < BUFSIZE; tempCount++){
-        		reg_24data.all=lmx_init[(135-BUFSIZE+tempCount)/3];
+        for (tempCount = BUFSIZE/2-135; tempCount < BUFSIZE/2; tempCount++){
+        		reg_24data.all=lmx_init[(135-BUFSIZE/2+tempCount)/3];
                	((uint8_t *)bufTxPingPong[count])[tempCount++] = reg_24data.dataBit.data0;
                	((uint8_t *)bufTxPingPong[count])[tempCount++] = reg_24data.dataBit.data1;
                	((uint8_t *)bufTxPingPong[count])[tempCount]   = reg_24data.dataBit.data2;
         }
 #endif
     }
-    memset(buf_transmit,0x80, BUFSIZE);
-    memcpy((unsigned char*)bufTxPingPong[1],buf_transmit,BUFSIZE);
+    memset(buf_transmit,0xFF, BUFSIZE);
+    memcpy((unsigned char*)bufTxPingPong[1],(unsigned char*)bufTxPingPong[0],BUFSIZE);
 
-    /* Start main loop to iterate through frames */
-//    while(debugVar)
-//    {
-        /* submit frames to the driver */
-        for (count = 0; count < NUM_BUFS+1; count++)
-        {
-            /* RX frame processing */
-            rxFrame[rxFrameIndex].cmd = Mcbsp_IOBuf_Cmd_READ;
+	/* submit frames to the driver */
+	for (count = 0; count < NUM_BUFS+1; count++)
+	{
+		/* RX frame processing */
+		rxFrame[rxFrameIndex].cmd = Mcbsp_IOBuf_Cmd_READ;
 #ifdef	MCBSP_LOOP_PING_PONG
-            memset((uint8_t *)bufRxPingPong[count], 0, REC_BUFSIZE);
-            rxFrame[rxFrameIndex].addr = (void*)bufRxPingPong[count];
+		memset((uint8_t *)bufRxPingPong[count], 0, BUFSIZE);
+		rxFrame[rxFrameIndex].addr = (void*)bufRxPingPong[count];
 #else
-            memset((uint8_t *)bufRx[count], 0, REC_BUFSIZE);
-            rxFrame[rxFrameIndex].addr = (void*)bufRx[count];
+		memset((uint8_t *)bufRx[count], 0, BUFSIZE);
+		rxFrame[rxFrameIndex].addr = (void*)bufRx[count];
 #endif
-            rxFrame[rxFrameIndex].size = REC_BUFSIZE;
-            rxFrame[rxFrameIndex].arg = (uint32_t) hMcbspRxChan;
-            rxFrame[rxFrameIndex].status = MCBSP_STATUS_COMPLETED;
-            rxFrame[rxFrameIndex].misc = 1;   /* reserved - used in callback to indicate asynch packet */
+		rxFrame[rxFrameIndex].size = BUFSIZE;
+		rxFrame[rxFrameIndex].arg = (uint32_t) hMcbspRxChan;
+		rxFrame[rxFrameIndex].status = MCBSP_STATUS_COMPLETED;
+		rxFrame[rxFrameIndex].misc = 1;   /* reserved - used in callback to indicate asynch packet */
 
-            status = mcbspSubmitChan(hMcbspRxChan, (void *)&rxFrame[rxFrameIndex]);
-            if (status != MCBSP_STATUS_PENDING)
-            {
-                System_printf ("Debug(Core %d): Error: RX buffer #%d submission FAILED\n", coreNum, count);
-            }
-            rxFrameIndex++;
-            rxFrameIndex = (rxFrameIndex >= (NUM_OF_MCBSP_FRAMES)) ? 0 : rxFrameIndex;
-            rxSubmitCount++;
+		status = mcbspSubmitChan(hMcbspRxChan, (void *)&rxFrame[rxFrameIndex]);
+		if (status != MCBSP_STATUS_PENDING)
+		{
+			System_printf ("Debug(Core %d): Error: RX buffer #%d submission FAILED\n", coreNum, count);
+		}
+		rxFrameIndex++;
+		rxFrameIndex = (rxFrameIndex >= (NUM_OF_MCBSP_FRAMES)) ? 0 : rxFrameIndex;
+		rxSubmitCount++;
 
 
-            txFrame[txFrameIndex].cmd = Mcbsp_IOBuf_Cmd_WRITE;
+		txFrame[txFrameIndex].cmd = Mcbsp_IOBuf_Cmd_WRITE;
 #ifdef	MCBSP_LOOP_PING_PONG
-            txFrame[txFrameIndex].addr = (void*)bufTxPingPong[count];
+		txFrame[txFrameIndex].addr = (void*)bufTxPingPong[count];
 #else
-            txFrame[txFrameIndex].addr = (void*)bufTx[count];
+		txFrame[txFrameIndex].addr = (void*)bufTx[count];
 #endif
-            txFrame[txFrameIndex].size = BUFSIZE;
-            txFrame[txFrameIndex].arg = (uint32_t)hMcbspTxChan;
-            txFrame[txFrameIndex].status = MCBSP_STATUS_COMPLETED;
-            txFrame[txFrameIndex].misc = 1;   /* reserved - used in callback to indicate asynch packet */
+		txFrame[txFrameIndex].size = BUFSIZE;
+		txFrame[txFrameIndex].arg = (uint32_t)hMcbspTxChan;
+		txFrame[txFrameIndex].status = MCBSP_STATUS_COMPLETED;
+		txFrame[txFrameIndex].misc = 1;   /* reserved - used in callback to indicate asynch packet */
 
-            status = mcbspSubmitChan(hMcbspTxChan, (void *)&txFrame[txFrameIndex]);
-            if (status != MCBSP_STATUS_PENDING)
-            {
-                System_printf ("Debug(Core %d): Error: TX buffer  #%d submission FAILED\n", coreNum, count);
-            }
-            txFrameIndex++;
-            txFrameIndex = (txFrameIndex >= (NUM_OF_MCBSP_FRAMES)) ? 0 : txFrameIndex;
-            txSubmitCount++;
+		status = mcbspSubmitChan(hMcbspTxChan, (void *)&txFrame[txFrameIndex]);
+		if (status != MCBSP_STATUS_PENDING)
+		{
+			System_printf ("Debug(Core %d): Error: TX buffer  #%d submission FAILED\n", coreNum, count);
+		}
+		txFrameIndex++;
+		txFrameIndex = (txFrameIndex >= (NUM_OF_MCBSP_FRAMES)) ? 0 : txFrameIndex;
+		txSubmitCount++;
+	}
 
-
-            }
-//     }// end of submit
-    	while (1){
-    		Task_sleep(1);
-    	}
-//    return;
+	while (1){
+		Task_sleep(1);
+	}
 }
 
 /*

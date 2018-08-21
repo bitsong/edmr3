@@ -1,12 +1,15 @@
 #ifndef _AUDIO_QUEUE_H
 #define _AUDIO_QUEUE_H
+
 #include <xdc/std.h>
 
 #ifndef QUEUE_DATA_TYPE
 #define QUEUE_DATA_TYPE     UChar
 #endif
-#define DSC_RX_BUF_LEN             0x4000//0x1000//0x3FFF
+
+#define DSC_RX_BUF_LEN             	0x4000//0x1000//0x3FFF
 #define DSC_RX_BUF_LEN_1			0x3fff
+
 #define AUDIO_QUEUE_RX_LENGTH   8192
 
 #ifndef AudioQueue_DATA_TYPE
@@ -35,26 +38,26 @@ typedef struct audioQueue {
 } audioQueue;
 
 /*
- * 功能：将data放入队尾
+ * 鍔熻兘锛氬皢data鏀惧叆闃熷熬
  */
-//static inline state enQueue(Queue * q, QUEUE_DATA_TYPE data)
-//{
-//	//如果队列满
-//	if(q->front==(q->rear+1)&0x3fff)
-//    {
-////		printf("Warming:The queue is full!\n");
-//		return ERROR;
-//    }
-//
-//    q->buf[q->rear] = data;
-//    q->rear = (q->rear+1) & DSC_RX_BUF_LEN_1;
-//	q->capacity ++;
-//    return OK;
-//}
+static inline state enQueue(Queue * q, QUEUE_DATA_TYPE data)
+{
+	//濡傛灉闃熷垪婊�
+	if(q->capacity >= q->size)
+    {
+//		printf("Warming:The queue is full!\n");
+		return ERROR;
+    }
+
+    q->buf[q->rear] = data;
+    q->rear = (q->rear+1) & DSC_RX_BUF_LEN_1;
+	q->capacity ++;
+    return OK;
+}
 
 
 void queueInit(Queue * q, unsigned short size, QUEUE_DATA_TYPE *buf);
-state enQueue(Queue * q, QUEUE_DATA_TYPE data);
+//state enQueue(Queue * q, QUEUE_DATA_TYPE data);
 QUEUE_DATA_TYPE deQueue(Queue * q);
 UShort queueLength(Queue *q);
 UShort getFrontPosition(Queue *q);

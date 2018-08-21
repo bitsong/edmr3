@@ -4,10 +4,9 @@
  *  Created on: 2016-12-20
  *      Author: ws
  */
+#include <ti/sysbios/BIOS.h>
 #include <ti/sysbios/timers/timer64/Timer.h>
 #include <ti/sysbios/hal/Hwi.h>
-
-#include <ti/sysbios/BIOS.h>
 #include <math.h>
 
 #include "syslink_init.h"
@@ -20,15 +19,19 @@
 
 #define SIZE1	72
 #define SIZE2	720
-
+#define DSC_TH	20
 CSL_GpioRegsOvly     gpioRegs = (CSL_GpioRegsOvly)(CSL_GPIO_0_REGS);
 
-//short buf_temp[16000];
+//const Int BUFSIZE=3600;
+extern float E_noise;
+const float E_noise_th[10]={0.38,	0.31,	0.248,	0.185,	0.131,	0.085,	0.056,	0.036,  0.019,	0.013};
 Timer_Handle 		timer;
-const unsigned int dsc_ch[4]={231, 236, 238, 221};
+const unsigned int dsc_ch[4]={221, 231, 236, 238};
 unsigned int current_dscch, power_index;
-QUEUE_DATA_TYPE    dsc_buf[DSC_RX_BUF_LEN];
-short intersam[1200];
+
+#pragma DATA_ALIGN   (dsc_buf, 128)
+unsigned char dsc_buf[4][DSC_BUF_SIZE ];
+//short intersam[1200];
 short send_buf[960];
 float Buf10[720],Buf5[4800];
 UInt	tx_flag, rx_flag, tx_submit, rx_submit;
@@ -38,30 +41,30 @@ unsigned char *buf_transmit;
 struct rpe *prpe = &rpe[0];
 rpe_attr_t attr=RPE_ATTR_INITIALIZER;
 short buf_send[RPE_DATA_SIZE/2];
-unsigned char buf_adc[REC_BUFSIZE];
+unsigned char buf_adc[BUFSIZE];
 float eeprom_data[150];
 short buf_de[320];
 short buf_md[960];
-Int RXSS_THRESHOLD =0;
+Int RXSS_THRESHOLD =0,	TH_LEVEL=0;
 float RSSI_db=0;
 float channel_freq=0;
 float transmit_power;
 Short working_mode ,dsc_status;
-Queue q;
 int p_index0=0;
 float error_rate[5];
-Short p_errorarray[256];
-Short p_arrayin[256][72];
+//Short p_errorarray[256];
+//Short p_arrayin[256][72];
 double sys_time, exec_time,per_time;
-float trans_k;
 int test_count0, test_count1,test_count2, test_count3,test_count4,test_count5;
 short  ebapp,eflink,ebphy,flink;
 extern void* bufRxPingPong[2];
 extern void* bufTxPingPong[2];
 extern int TxpingPongIndex,RxpingPongIndex;
-//extern int indexp;
-extern int DSC_TEST_CNT[25];
-extern Int BUFSIZE;
+extern unsigned int DSC_TEST_CNT[25];
+
+unsigned char dsc_ch_flag, dsc_test_flag;
+volatile unsigned int dsc_buf_index;
+
 /* private functions */
 Void smain(UArg arg0, UArg arg1);
 Void task_enque(UArg arg0, UArg arg1);
@@ -71,6 +74,7 @@ Void hwiFxn(UArg arg);
 Void clk0Fxn(UArg arg0);
 Void DSCRxTask(UArg a0, UArg a1);
 Void data_send(uint8_t *buf_16);
+Void DSCScanningTask(UArg a0, UArg a1);
 
 extern Void task_mcbsp(UArg arg0, UArg arg1);
 extern int Rx_process(unsigned short* ad_data,	short* de_data);
@@ -130,8 +134,6 @@ Void smain(UArg arg0, UArg arg1)
        	return;
     }
 
-    queueInit(&q, DSC_RX_BUF_LEN, dsc_buf);
-
     sem1=Semaphore_create(0,NULL,&eb);
     sem2=Semaphore_create(0,NULL,&eb);
     sem3=Semaphore_create(0,NULL,&eb);
@@ -156,7 +158,7 @@ Void smain(UArg arg0, UArg arg1)
     dac_write(4, 1.6);
     dac_write(5, 2.5);
     transmit_power=eeprom_data[39];
-    buf_transmit=(unsigned char*)malloc(RPE_DATA_SIZE/2*15);
+    buf_transmit=(unsigned char*)malloc(BUFSIZE);
     //task create
     Error_init(&eb);
     Task_Params_init(&taskParams);
@@ -164,7 +166,7 @@ Void smain(UArg arg0, UArg arg1)
     taskParams.arg0 = (UArg)arg0;
     taskParams.arg1 = (UArg)arg1;
     taskParams.stackSize = 0x1000;
-    taskParams.priority=1;
+    taskParams.priority=2;
     Task_create(task_mcbsp, &taskParams, &eb);
     if(Error_check(&eb)) {
     	System_abort("main: failed to create application 1 thread");
@@ -212,26 +214,35 @@ Void smain(UArg arg0, UArg arg1)
 #endif
 //
     Task_Params_init(&taskParams);
+	taskParams.priority = 2;
+    taskParams.instance->name = "DSCScanningTask";
+    taskParams.stackSize = 0x1000;
+    Task_create(DSCScanningTask, &taskParams, NULL);
+    if(Error_check(&eb)) {
+           System_abort("main: failed to create application DSCScanningTask thread");
+    }
+
+    Task_Params_init(&taskParams);
 	taskParams.priority = 1;
     taskParams.instance->name = "DSCRxTask";
-    taskParams.stackSize = 0x2000;
-    taskParams.priority=1;
+    taskParams.stackSize = 0x5000;
     Task_create(DSCRxTask, &taskParams, NULL);
     if(Error_check(&eb)) {
            System_abort("main: failed to create application DSCRxTask thread");
     }
 
-    Timer_Params 		timerParams;
-    Error_init(&eb);
-    Timer_Params_init(&timerParams);
-    timerParams.startMode= Timer_StartMode_AUTO;
-    timerParams.period =1200000;
-    timer = Timer_create(1, clk0Fxn, &timerParams, &eb);
-    if (timer == NULL) {
-    	System_abort("Timer create failed");
-    }
-    else
-    	log_info("Timer create success");
+
+//    Timer_Params 		timerParams;
+//    Error_init(&eb);
+//    Timer_Params_init(&timerParams);
+//    timerParams.startMode= Timer_StartMode_AUTO;
+//    timerParams.period =1200000;
+//    timer = Timer_create(1, clk0Fxn, &timerParams, &eb);
+//    if (timer == NULL) {
+//    	System_abort("Timer create failed");
+//    }
+//    else
+//    	log_info("Timer create success");
 
     setup_TIMER(2, 119, hwiFxn);
 
@@ -246,6 +257,8 @@ Void smain(UArg arg0, UArg arg1)
     		RSSI_db=0.071842*powi(RSSI_db,3)+ 25.165*powi(RSSI_db,2)+ 2939.6*RSSI_db + 114395;
     	if(RSSI_db<-135)
     		RSSI_db=-135;
+    	if(dsc_buf_index>18000)
+    		dsc_buf_index=0;
     	dsp_logic();
     }
 
@@ -263,10 +276,7 @@ Void smain(UArg arg0, UArg arg1)
 /* Here on dsc_timer interrupt */
 Void hwiFxn(UArg arg)
 {
-	int flag;
-
-	flag=CSL_FEXT(gpioRegs->BANK[1].IN_DATA,GPIO_IN_DATA_IN1);
-	enQueue(&q, flag);
+	dsc_buf[current_dscch][dsc_buf_index++]=CSL_FEXT(gpioRegs->BANK[1].IN_DATA,GPIO_IN_DATA_IN1);
 }
 
 /*
@@ -275,21 +285,34 @@ Void hwiFxn(UArg arg)
 Void clk0Fxn(UArg arg0)
 {
 //	UInt key;
-    static int count=0;
+    static int count=2;
     UInt32 timeout, timecount;
 
-    timecount = count++%3;
-    if(3==timecount){
+    timecount = count++%4;
+#if 0
+    if(0==timecount){
     	timeout=1200000;
-    	count=0;
+    	count=1;
 		CSL_FINS(gpioRegs->BANK[4].OUT_DATA,GPIO_OUT_DATA_OUT13,1);
     }
     else{
 		CSL_FINS(gpioRegs->BANK[4].OUT_DATA,GPIO_OUT_DATA_OUT13,0);
-    	timeout=680000;
+    	timeout=1200000;
     }
+#else
+
+    timeout=1200000;
+    //bypass channel 0:ask
+    if(0==timecount){
+    	timecount=1;
+    	count=2;
+    }
+
+#endif
     adf_set_ch(dsc_ch[timecount]);
-    current_dscch=dsc_ch[timecount];
+    current_dscch=timecount;
+    dsc_buf_index=0;
+    dsc_ch_flag=current_dscch+1;
 //    key=Hwi_disable();
     Timer_stop(timer);
     Timer_setPeriodMicroSecs(timer, timeout);
@@ -312,9 +335,99 @@ void clock_add(Timer_Handle handle, UInt32 ticks_us)
  */
 Void DSCRxTask(UArg a0, UArg a1)
 {
-	DSC_RX(&q);
+	DSC_RX();
 }
 
+
+/****************************
+***       HPF函数  and energy   **********
+*****************************/
+void DSC_Dete_HPF(unsigned char *inBuf,float *outBuf)
+{
+	register short i = 0;
+	static float temp[436] = {0};
+	float coffe0=0.752144544489035,coffe1=-0.222634817517790, coffe2=-0.156529751247228,coffe3=-0.073745158087348,
+		  coffe4=-0.002078714878018,coffe5= 0.039022173303044, coffe6=0.045410806593024,coffe7=0.027304738142922,coffe8=0.001888797891960;
+	for(i = 0; i < 16; i++)
+		temp[i] = temp[420 + i];
+	for(i=0; i<420;i++)
+		temp[i+16] = inBuf[i];
+	for(i = 0; i < 420; i++)
+	{
+		outBuf[i] = temp[i+8]*coffe0+(temp[i+7]+temp[i+9])*coffe1+(temp[i+6]+temp[i+10])*coffe2
+		+(temp[i+5]+temp[i+11])*coffe3 + (temp[i+4]+temp[i+12])*coffe4+(temp[i+3]+temp[i+13])*coffe5
+		+(temp[i+2]+temp[i+14])*coffe6 + (temp[i+1]+temp[i+15])*coffe7 + (temp[i+0]+temp[i+16])*coffe8;
+	}
+}
+/*****************************
+***   求平方和函数  **********
+******************************/
+float En_Value(float *inBuf)
+{
+	static float energy_avr[DSC_AVR];
+	static int j;
+	int i=0;
+	float sum=0;
+	float sum_sum=0;
+
+	for(i=0;i<420;i++)
+	{
+		sum += inBuf[i]*inBuf[i];
+	}
+	for(i=0; i< DSC_AVR-1; i++)
+		energy_avr[i]=energy_avr[i+1];
+	energy_avr[i]=sum;
+
+	for(i=0; i<DSC_AVR; i++){
+		sum_sum +=energy_avr[i];
+	}
+	j++;
+	if(j>DSC_AVR)
+		j=DSC_AVR;
+	return sum_sum/j;
+}
+
+float energy_dsc;
+Void DSCScanningTask(UArg a0, UArg a1)
+{
+    static int count=1;
+    UInt32  timecount;
+    unsigned char *ptr_scanning;
+    float temp_buf[SCAN_LEN];
+//    float energy_dsc;
+
+    while(1){
+		ptr_scanning=(unsigned char *)dsc_buf;
+		timecount = count++%4;
+		//bypass channel 0:ask
+		if(0==timecount){
+			 timecount=1;
+			 count=2;
+			 CSL_FINS(gpioRegs->BANK[1].OUT_DATA,GPIO_OUT_DATA_OUT29,1);
+		}
+		else if(2==timecount){
+			CSL_FINS(gpioRegs->BANK[1].OUT_DATA,GPIO_OUT_DATA_OUT29,0);
+		}
+		dsc_buf_index=0;
+		if(dsc_test_flag!=1){
+			current_dscch=timecount;
+			adf_set_ch(dsc_ch[timecount]);
+		}
+		Task_sleep(150);
+		ptr_scanning+=timecount*DSC_BUF_SIZE+840;
+		DSC_Dete_HPF(ptr_scanning, temp_buf);
+		energy_dsc=En_Value(temp_buf);
+
+		if(energy_dsc>DSC_TH){
+			continue;
+		}
+		else{
+			dsc_buf_index=0;
+			Task_sleep(890);
+			dsc_ch_flag=current_dscch+1;
+		}
+	}
+}
 /*
  *功能：信号发送时低通滤波
  *参数：inBuf:输入为960个数据的指针; outBuf:输出为低通滤波后数据指针; len:输入数据的长度（默认960）
@@ -466,8 +579,6 @@ void dataFilterAndTrans(short *inBuf,float *outBuf,short len)
 {
 //	delDc(inBuf,len);
 	hpFilter(inBuf, inBuf);
-//	LP_Filter0(inBuf,inBuf);
-//	scopeLimit(inBuf,len);
 	sendPreEmphasis(inBuf,outBuf,len);		//input:outBuf,output:inBuf(inBuf as a temp buffer)
 	scopeLimit(outBuf,len);
 	LP_Filter(outBuf,outBuf);
@@ -505,11 +616,6 @@ void from24To120d(float *inBuf,float *outBuf)
 }
 /*
 function: insert data 1:10
-inBuf size:72
-outBuf size:720
-*/
-/*
-function: insert data 1:10  20 order
 inBuf size:72
 outBuf size:720
 */
@@ -621,7 +727,7 @@ float p_statics(short *pbufp, int index0)
 		for(j=i+1;j<4;j++){
 			if(cdata[i]==cdata[j]){
 				csum++;
-				p_errorarray[index0]=cdata[i];
+//				p_errorarray[index0]=cdata[i];
 			}
 		}
 //	memset(cdata, 0, 8);
@@ -656,6 +762,16 @@ Void caculate_ber(short total_frame)
 	error_rate[2]=(double)ebphy/(total_frame*216);
 }
 
+void adjust_amp(short *input)
+{
+	int i;
+	short *p=input;
+
+	for(i=0;i<RPE_DATA_SIZE;i++){
+		*p=1<<(*p);
+		p++;
+	}
+}
 #if 1
 Void task_io(UArg arg0, UArg arg1)
 {
@@ -700,32 +816,31 @@ Void task_io(UArg arg0, UArg arg1)
     		exec_time=system_time()-sys_time;
     		sys_time=system_time();
     		if(working_mode==DIGITAL_MODE){
-//        		pbuf=buf_de;
+        		pbuf=buf_de;
 //        		memcpy(p_arrayin[p_index0],pbuf,72*2);//
-//        		pbuf+=36;
-//        		for(j=0; j<36; j++){
-//        			if(pbuf[j]==-1)
-//        				pbuf[j]=0;
-//        			p2sum +=pbuf[j];
-//        		}
+        		pbuf+=36;
+        		for(j=0; j<36; j++){
+        			if(pbuf[j]==-1)
+        				pbuf[j]=0;
+        			p2sum +=pbuf[j];
+        		}
 //        		p_errorarray[p_index0++]=p2sum;
-//        		if(p2sum>32){
-////        			testing_rx=TRUE;
-//        			total_frames++;
-//        			test_count4++;
-//        		}
-//        		//test finish,submit result,test quit
-//        		if(p2sum<10 && testing_rx==TRUE){
-//        			caculate_ber(total_frames);
-//        			p_index0=total_frames=0;
+        		if(p2sum>32){
+        			testing_rx=TRUE;
+        			total_frames++;
+        		}
+        		//test finish,submit result,test quit
+        		if(p2sum<10 && testing_rx==TRUE){
+        			caculate_ber(total_frames);
+        			p_index0=total_frames=0;
 //            		memset(p_errorarray, 0, 512);
-//            		ebapp=eflink=ebphy=flink=0;
-//        			rx_submit=1;
-//        			rx_flag=0;
-//        			continue;
-//        		}
-//        		p2sum=0;
-//    			pbuf+=36;
+            		ebapp=eflink=ebphy=flink=0;
+        			rx_submit=1;
+        			rx_flag=0;
+        			continue;
+        		}
+        		p2sum=0;
+    			pbuf+=36;
 
     			pbuf=buf_de+72;
     		}
@@ -734,18 +849,18 @@ Void task_io(UArg arg0, UArg arg1)
 
     		for(i=0;i<3;i++){
     			if(testing_rx==TRUE && working_mode==DIGITAL_MODE){
-//    				samcoder_decode_verbose(dcoder0, pbuf, buf_send, &fec_state);
-//    				statics_fec(fec_state);
+    				samcoder_decode_verbose(dcoder0, pbuf, buf_send, &fec_state);
+    				statics_fec(fec_state);
     				pbuf+=72;
     			}else if(working_mode==DIGITAL_MODE){
     				samcoder_decode( dcoder0, pbuf, buf_send);
+//    				adjust_amp(buf_send);
     				data_send((uint8_t*)buf_send);
     				pbuf+=72;
     				test_count1++;
     			}else{
     				data_send((uint8_t*)pbuf2);
     				pbuf2+=320;
-//    				test_count4++;
     			}
     		}
     		sp_count=0;
@@ -769,7 +884,7 @@ Void task_io(UArg arg0, UArg arg1)
     						else
     							syn_p[36+j]=-1;
     					}
-            			memcpy(p_arrayin[p_index],syn_p,72*2);
+//            			memcpy(p_arrayin[p_index],syn_p,72*2);
             			sp_count=0;
             			p_index++;
             			test_count1++;
@@ -786,7 +901,7 @@ Void task_io(UArg arg0, UArg arg1)
             			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT13,0); //R:F1
             			rx_submit=1;
         				tx_flag=0;
-        				memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
+        				memset(buf_transmit,0x88,BUFSIZE);
 //            			rx_flag=1;
             			continue;
     				}else if(sp_count!=3){
@@ -813,14 +928,13 @@ Void task_io(UArg arg0, UArg arg1)
         			if(status == ERPE_B_PENDINGATTRIBUTE){
         				status = rpe_get_attribute(prpe,&attr,RPE_ATTR_FIXED);
         				if(!status && attr.type == RPE_DATAFLOW_END){
-        					memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
+        					memset(buf_transmit,0x88,BUFSIZE);
         					tx_flag=0;
         					dac_write(3, 0);
         					CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT6,0); //TX_SW
         					CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT7,1);//RX_SW
         					CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT13,0); //R:F1
         					rx_submit=1;
-        					test_count5++;
         					continue;
         				}
     				}else if(status < 0){
@@ -868,7 +982,7 @@ void date_rev(short *iobuf)
     	if(status == ERPE_B_PENDINGATTRIBUTE){
     		status = rpe_get_attribute(prpe,&attr,RPE_ATTR_FIXED);
     		if(!status && attr.type == RPE_DATAFLOW_END){
-    			memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
+    			memset(buf_transmit,0x88,RPE_DATA_SIZE/2*15);
     			tx_flag=0;
     			dac_write(3, 0);
     			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT6,0); //TX_SW
@@ -945,7 +1059,6 @@ Void task_io(UArg arg0, UArg arg1)
         		if(p2sum>32){
 //        			testing_rx=TRUE;
         			total_frames++;
-        			test_count4++;
         		}
         		//test finish,submit result,test quit
         		if(p2sum<10 && testing_rx==TRUE){
@@ -976,7 +1089,6 @@ Void task_io(UArg arg0, UArg arg1)
     			}else{
     				data_send((uint8_t*)pbuf2);
     				pbuf2+=320;
-//    				test_count4++;
     			}
     		}
     		sp_count=0;
@@ -1014,7 +1126,7 @@ Void task_io(UArg arg0, UArg arg1)
                 			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT13,0); //R:F1
                 			rx_submit=1;
             				tx_flag=0;
-            				memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
+            				memset(buf_transmit,0x88,RPE_DATA_SIZE/2*15);
     //            			rx_flag=1;
                 			continue;
         				}else if(sp_count!=3){
@@ -1085,7 +1197,7 @@ Void task_modulate(UArg arg0, UArg arg1)
     			Semaphore_pend(sem2, BIOS_WAIT_FOREVER);
 //    			exec_time=system_time()-sys_time;
 //    			sys_time=system_time();
-	    		data_process(pBuf5,buf_transmit,1200);
+	    		data_process(pBuf5,buf_transmit,BUFSIZE/3);
 	    		pBuf5+=1200;
     		}
 		}
@@ -1101,43 +1213,21 @@ void data_process(float *buf_in, unsigned char *buf_out, unsigned int size)
 	reg_16 reg16;
 	float k;
 	static float factor;
-//	static int count12=0;
-//	int i1,i2;
-//	static int index;
+
 	if(dsc_status==0 && working_mode==DIGITAL_MODE)
 		k=160000;
 	else
 		k=5.8;
 	factor=FSK_FAST_SPI_calc();
-	trans_k=factor;
 
-//	for(i1=0;i1<1200;i1++)
-//		buf_temp[i1]=2000*sin(2*Pi*i1*450/120000);
-//	for(i1=1200;i1<2400;i1++)
-//		buf_temp[i1]=2000*sin(2*Pi*i1*3*450/120000);
-	tempdata=0;
     for(tempCount=0;tempCount<size;tempCount++)
     {
-
-    	intersam[tempCount]=buf_in[tempCount]*k;
-
-//    	if(index<14400)
-//    		buf_temp[index]=intersam[tempCount];
-
-    	//Interpolation
-//    	reg16.all=(unsigned short)(factor*(buf_temp[tempCount+count12*1200]));
-    	reg16.all=(unsigned short)(factor*(intersam[tempCount]));
-//    	if(++index==14400)
-//    		index=0;
-
+//    	intersam[tempCount]=buf_in[tempCount]*k;
+    	reg16.all=(unsigned short)(factor*(buf_in[tempCount]*k));
     	((uint8_t *)buf_out)[tempdata++] 	 	 = reg16.dataBit.data0;
     	((uint8_t *)buf_out)[tempdata++] 	 	 = reg16.dataBit.data1;
     	((uint8_t *)buf_out)[tempdata++] 	     = (uint8_t)33;
-
     }
-//    count12++;
-//    if(2==count12)
-//    	count12=0;
 }
 
 
@@ -1167,14 +1257,14 @@ Void data_send(uint8_t *buf_16)
 		if(dsc_status==0 && working_mode==DIGITAL_MODE){
 			memcpy(buf,(unsigned char*)buf_16,size);	//buf_16: data to be sent
 		}else{
-		    if(RSSI_db<RXSS_THRESHOLD){
+		    if(RSSI_db<RXSS_THRESHOLD || E_noise > E_noise_th[TH_LEVEL]){
 		    	if(++count1==3){
 		    		silence=0;
 		    		count1--;
 		    		count2=0;
 		    	}
 		    }
-		    else if(RSSI_db>RXSS_THRESHOLD+3){
+		    else if(RSSI_db>RXSS_THRESHOLD+3 && E_noise< E_noise_th[TH_LEVEL]-0.03){
 		    	if(++count2==3){
 		    		silence=1;
 			    	count2--;
@@ -1182,7 +1272,7 @@ Void data_send(uint8_t *buf_16)
 		    	}
 		    }
 
-		    if(0==silence)
+		    if(0==silence && RXSS_THRESHOLD!=-250)
 		    	memset(buf,0,size);
 		    else
 		    	memcpy(buf,(unsigned char*)buf_16,size);	//buf_16: data to be sent
@@ -1204,7 +1294,7 @@ void data_extract(unsigned char *input, unsigned char *output)
 {
 	unsigned int i;
 
-	for(i=0;i<REC_BUFSIZE/3;i++){
+	for(i=0;i<BUFSIZE/3;i++){
 		*output++=*input++;
 		*output++=*input++;
 		input++;
@@ -1238,7 +1328,7 @@ Void task_enque(UArg arg0, UArg arg1)
 {
 	extern audioQueue audioQ;
 	extern AudioQueue_DATA_TYPE audioQueueRxBuf[];
-	unsigned short buf_16[REC_BUFSIZE/3] = {0};
+	unsigned short buf_16[1200] = {0};
 	static short pingpongflag, send_count;
 	static short *pmd;
 	int status;
@@ -1337,6 +1427,9 @@ void sys_configure(void)
     CSL_FINS(gpioRegs->BANK[3].DIR,GPIO_DIR_DIR0,0);
     CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT0,1);
 
+
+    CSL_FINS(gpioRegs->BANK[3].DIR,GPIO_DIR_DIR12,1);
+
     //GP6[13]
     CSL_FINS(gpioRegs->BANK[3].DIR,GPIO_DIR_DIR13,0);
     CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT13,0);
@@ -1353,24 +1446,37 @@ void sys_configure(void)
 
 void ch_chPara(){
 	reg_24 reg_24data;
-	uint32_t tempCount=0;
+	Int tempCount=0;
 
-	for (tempCount = 0; tempCount < 36; tempCount++){
-	    reg_24data.all=lmx_init[45+tempCount/3];
-	    buf_transmit[tempCount++] = reg_24data.dataBit.data0;
-	    buf_transmit[tempCount++] = reg_24data.dataBit.data1;
-	    buf_transmit[tempCount]   = reg_24data.dataBit.data2;
-	}
+//	for (tempCount = 0; tempCount < 42; tempCount++){
+//	    reg_24data.all=lmx_init[45+tempCount/3];
+//	    buf_transmit[tempCount++] = reg_24data.dataBit.data0;
+//	    buf_transmit[tempCount++] = reg_24data.dataBit.data1;
+//	    buf_transmit[tempCount]   = reg_24data.dataBit.data2;
+//	}
+
+    for (tempCount = 0; tempCount < BUFSIZE; tempCount++){
+    	buf_transmit[tempCount++]  =0x88;
+    	buf_transmit[tempCount++]  =0x88;
+    	buf_transmit[tempCount]    = 0x88;
+    }
+    for (tempCount = BUFSIZE/2-42; tempCount < BUFSIZE/2; tempCount++){
+    		reg_24data.all=lmx_init[45+(42-BUFSIZE/2+tempCount)/3];
+    		buf_transmit[tempCount++]  = reg_24data.dataBit.data0;
+    		buf_transmit[tempCount++]  = reg_24data.dataBit.data1;
+    		buf_transmit[tempCount]   = reg_24data.dataBit.data2;
+    }
+
 }
 
 void ch_init(){
 	reg_24 reg_24data;
-	uint32_t tempCount=0;
+	Int tempCount=0;
 
     for (tempCount = 0; tempCount < BUFSIZE-135; tempCount++){
-    	buf_transmit[tempCount++] =0x80;
-    	buf_transmit[tempCount++] =0x80;
-    	buf_transmit[tempCount]  = 0x80;
+    	buf_transmit[tempCount++] =0x88;
+    	buf_transmit[tempCount++] =0x88;
+    	buf_transmit[tempCount]  = 0x88;
     }
     for (tempCount = BUFSIZE-135; tempCount < BUFSIZE; tempCount++){
     		reg_24data.all=lmx_init[(135-BUFSIZE+tempCount)/3];
@@ -1393,11 +1499,14 @@ void power_ctrl(float freq)
 	}
 
 	freq_section=27.5+2*freq_index;
+#if 1
 	if(0==power_index)
 		freq_index=freq_index+60;
 	else
 		freq_index=freq_index+67;
-//	freq_index=freq_index+53+power_index*14;
+#else
+	freq_index=freq_index+53+power_index*14;
+#endif
 	if(freq-freq_section<0.001){
 		transmit_power = eeprom_data[freq_index];
 	}
@@ -1417,7 +1526,7 @@ void dsp_logic()
 	char* pstr=NULL;
 	char* poffs=NULL;
     message_t *msg =NULL, *msg_send=NULL;
-    static int unlock_count;
+//    static int unlock_count;
 
     if(1==rx_submit){
     	msg_send=(message_t *)message_alloc(msgbuf[0],sizeof(message_t));
@@ -1465,31 +1574,31 @@ void dsp_logic()
     		switch (msg_temp.type){
     		case LMX2571_TX:
     		case TX_ON:
-    			rpe_flush(prpe,RPE_ENDPOINT_WRITER,TRUE,&attr);//返回 flush的数据量
+//    			rpe_flush(prpe,RPE_ENDPOINT_WRITER,TRUE,&attr);//返回 flush的数据量
     			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT7,0);//RX_SW
     			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT6,1); //TX_SW
     			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT13,1); //T:F2
     		    //TX_DAC
     			power_ctrl(channel_freq);
+    		    dac_write(3, transmit_power*0.5);
+    		    Task_sleep(5);
     		    dac_write(3, transmit_power);
     			rx_flag=0;
     			tx_flag=1;
-//    			if(working_mode==DIGITAL_MODE){
-//        			memset(p_count, 0 ,P_LEN*4);
-//        			indexp=0;
-//    			}
+    			test_count5=rpe_flush(prpe,RPE_ENDPOINT_READER,TRUE,&attr);
     			break;
     		case LMX2571_RX:
     		case RX_ON:
-    			rpe_flush(prpe,RPE_ENDPOINT_READER,TRUE,&attr);//返回 flush的数据量
+//    			rpe_flush(prpe,RPE_ENDPOINT_READER,TRUE,&attr);//返回 flush的数据量
     			dac_write(3, 0);
     			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT6,0); //TX_SW
     			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT7,1);//RX_SW
     			CSL_FINS(gpioRegs->BANK[3].OUT_DATA,GPIO_OUT_DATA_OUT13,0); //R:F1
     			tx_submit=0;
 				tx_flag=0;
-				memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
+				memset(buf_transmit,0x88,BUFSIZE);
     			rx_flag=1;
+    			test_count4=rpe_flush(prpe,RPE_ENDPOINT_WRITER,TRUE,&attr);
     			break;
     		case RSSI_RD:
     	    	msg_send=(message_t *)message_alloc(msgbuf[0],sizeof(message_t));
@@ -1537,24 +1646,24 @@ void dsp_logic()
 //    			log_info("tx_ch:%f",atof(msg_temp.data.d));
     			channel_freq=atof(msg_temp.data.d);
     			LMX2571_FM_CAL(1,atof(msg_temp.data.d), 1);
-    			lmx_init[53]=0xBC3;
-    			lmx_init[54]=lmx_init[55]=0x9C3;
-    			lmx_init[56]=0x9C3;
+    			lmx_init[55]=0xBC3;
+    			lmx_init[56]=lmx_init[57]=0x9C3;
+    			lmx_init[58]=0x9C3;
     			ch_chPara();
-    			Task_sleep(10);
-    			memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
+    			Task_sleep(15);
+    			memset(buf_transmit,0x88,BUFSIZE);
     			break;
     		case RX_CH:
     		case RX_CHF:
 //    			log_info("rx_ch:%f",49.95+atof(msg_temp.data.d));
     			dac_write(1, 2.5+(atof(msg_temp.data.d)-27.5)*0.1667);
     			LMX2571_FM_CAL(0,49.95+atof(msg_temp.data.d), 0);
-    			lmx_init[53]=0xB83;
-    			lmx_init[54]=lmx_init[55]=0x983;
-    			lmx_init[56]=0x983;
+    			lmx_init[55]=0xB83;
+    			lmx_init[56]=lmx_init[57]=0x983;
+    			lmx_init[58]=0x983;
     			ch_chPara();
-    			Task_sleep(10);
-    			memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
+    			Task_sleep(15);
+    			memset(buf_transmit,0x88,BUFSIZE);
     			break;
     		case AMC7823_AD:
     			ad_ch=atoi(msg_temp.data.d);
@@ -1616,8 +1725,9 @@ void dsp_logic()
 //    			transmit_power=eeprom_data[39];
     			break;
     		case RSSTH:
-    			RXSS_THRESHOLD=2*atoi(msg_temp.data.d)-125;
-    			if(-125==RXSS_THRESHOLD)
+    			TH_LEVEL=atoi(msg_temp.data.d);
+    			RXSS_THRESHOLD=2*TH_LEVEL-125;
+    			if(0==TH_LEVEL)
     				RXSS_THRESHOLD=-250;
     			break;
     		case PA_CURRENT:
@@ -1819,12 +1929,14 @@ void dsp_logic()
     			break;
     		case WORK_MODE:
     			working_mode=atoi(msg_temp.data.d);
+    			testing_tx=testing_rx=FALSE;
     			break;
     		case DSC_MODE:
     			dsc_status=atoi(msg_temp.data.d);
     			break;
     		case TEST_TX:
-    			testing_tx=TRUE;
+    			if(working_mode==DIGITAL_MODE)
+    				testing_tx=TRUE;
     			break;
     		case DSC_CNT:
     	    	msg_send=(message_t *)message_alloc(msgbuf[0],sizeof(message_t));
@@ -1841,7 +1953,17 @@ void dsp_logic()
     			}
     			break;
     		case DSC_CH:
-    			adf_set_ch(atoi(msg_temp.data.d));
+    			dsc_test_flag=1;
+    			status = atoi(msg_temp.data.d);
+    			adf_set_ch(status);
+    			if (status == 221)
+    				current_dscch=0;
+    			else if(status == 231)
+    				current_dscch=1;
+    			else if(status == 236)
+    				current_dscch=2;
+    			else if(status == 238)
+    				current_dscch=3;
     			break;
     		case ADF4002_LD:
     	    	msg_send=(message_t *)message_alloc(msgbuf[0],sizeof(message_t));
@@ -1867,18 +1989,18 @@ go_break:
     		}
     }
 
-    if(0==CSL_FEXT(gpioRegs->BANK[3].IN_DATA,GPIO_IN_DATA_IN12) && 1==rx_flag){
-    	if(unlock_count++>10){
-    		unlock_count=0;
-    		LMX2571_INIT_CAL(channel_freq);
-        	ch_init();
-    		Task_sleep(10);
-    		memset(buf_transmit,0x80,RPE_DATA_SIZE/2*15);
-    	}
-    }
-    else if(unlock_count>0 && CSL_FEXT(gpioRegs->BANK[3].IN_DATA,GPIO_IN_DATA_IN12) > 0 ){
-    	unlock_count--;
-    }
+//    if(0==CSL_FEXT(gpioRegs->BANK[3].IN_DATA,GPIO_IN_DATA_IN12) && 1==rx_flag){
+//    	if(unlock_count++>5){
+//    		unlock_count=0;
+//    		LMX2571_INIT_CAL(channel_freq);
+//        	ch_init();
+//    		Task_sleep(10);
+//    		memset(buf_transmit,0x88,BUFSIZE);
+//    	}
+//    }
+//    else if(unlock_count>0 && CSL_FEXT(gpioRegs->BANK[3].IN_DATA,GPIO_IN_DATA_IN12) > 0 ){
+//    	unlock_count--;
+//    }
 
 out:
 	return;

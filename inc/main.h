@@ -95,7 +95,11 @@
 #define SYNC_CODE_PREPARE	100
 #define RPE_DATAFLOW_END	101
 #define RPE_DATA_SIZE		640
-#define REC_BUFSIZE	 		3600
+#define BUFSIZE	 		3600
+#define DSC_BUF_SIZE 	19200	//19200
+#define SCAN_LEN		420
+#define RSSI_AVR		10
+#define DSC_AVR			1
 
 typedef volatile union reg_24bit{
 	struct reg24_2571{

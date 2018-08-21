@@ -27,7 +27,7 @@
 #define MBUF_MAX				2		//���ܳ���8��
 /*---------------------------------------------------------*/
 
-#define RPE_DSIZE				25600
+#define RPE_DSIZE				7680
 #define MAX_NAME_LEN			128
 
 /*option ��־λ*/

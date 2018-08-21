@@ -47,14 +47,14 @@ static UShort   generateFrameHead(UChar *frameHeadSrc1, UShort *frameHeadSrc2, Q
 
 
 //static void   generateFrameHead(UChar *frameHeadSrc1, UShort *frameHeadSrc2, QUEUE_DATA_TYPE *frameHead);
-static UShort oneMatch(Queue *q, QUEUE_DATA_TYPE * matchFrameHead, UShort startPosition, UShort len);
-static UShort matchHead(Queue *q, QUEUE_DATA_TYPE * matchFrameHead);
+static UShort oneMatch(unsigned char *q, QUEUE_DATA_TYPE * matchFrameHead, UShort startPosition, UShort len);
+static UShort matchHead(unsigned char *q, QUEUE_DATA_TYPE * matchFrameHead);
 static UShort fillFrame_Head(UShort *src, UShort *des, UShort startPostion);
-static void fillFrame_Queue(Queue *q, UShort *des, UShort startPosition);
-static UShort getNormalFrame(Queue *q, UShort *frameBuf);
+static void fillFrame_Queue(unsigned char *q, UShort *des, UShort startPosition);
+static UShort getNormalFrame(unsigned char *q, UShort *frameBuf);
 static UShort correctError(UShort *infBuf, errorInf *rowError, errorInf *columError);
 static UShort errorFixup(UShort *infBuf1, UShort *infBuf2);
-void DSC_RX(Queue *q);
+void DSC_RX(void);
 
 
 #endif
